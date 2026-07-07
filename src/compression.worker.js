@@ -357,8 +357,8 @@ async function processVideo(mp4boxfile, track, { bitrate, frameRate, videoSample
         width: finalWidth,
         height: finalHeight,
         bitrate: bitrate,
-        framerate: frameRate,
-        bitrateMode: 'constant' // Force CBR to strictly respect limit
+        framerate: Math.round(frameRate)
+        // Removed bitrateMode: 'constant' as it causes silent failures on macOS/Safari
     });
 
     // Fallback for variable if constant not supported
@@ -367,12 +367,15 @@ async function processVideo(mp4boxfile, track, { bitrate, frameRate, videoSample
         width: finalWidth,
         height: finalHeight,
         bitrate: bitrate,
-        framerate: frameRate,
+        framerate: Math.round(frameRate)
     });
 
     // Try High 4.2 -> Main 4.2 -> Baseline 4.2 -> High 5.1
     // Try Constant first, then Variable
-    const codecs = ['avc1.64002a', 'avc1.4d002a', 'avc1.42002a', 'avc1.640033'];
+    const codecs = [
+        'avc1.64002a', 'avc1.4d002a', 'avc1.42002a', 'avc1.640033',
+        'avc1.42E01E', 'avc1.4D401E', 'avc1.42001E', 'avc1.4d001e'
+    ];
     const configsToTry = [];
     codecs.forEach(c => configsToTry.push(getConf(c)));
     codecs.forEach(c => configsToTry.push(getConfVar(c)));
@@ -390,7 +393,9 @@ async function processVideo(mp4boxfile, track, { bitrate, frameRate, videoSample
         } catch (e) { }
     }
 
-    if (!selectedConfig) selectedConfig = configsToTry[0]; // fallback
+    if (!selectedConfig) {
+        throw new Error('No supported video encoder configuration found for your browser.');
+    }
 
     try {
         encoder.configure(selectedConfig);
@@ -412,7 +417,8 @@ async function processVideo(mp4boxfile, track, { bitrate, frameRate, videoSample
                 ctx.drawImage(frame, 0, 0, finalWidth, finalHeight);
                 const scaledFrame = new VideoFrame(canvas, {
                     timestamp: frame.timestamp,
-                    duration: frame.duration
+                    // Safari/macOS requires duration or it silently drops the frame
+                    duration: frame.duration || Math.round(1000000 / frameRate)
                 });
                 encoder.encode(scaledFrame);
                 scaledFrame.close();
