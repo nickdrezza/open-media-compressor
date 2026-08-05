@@ -39,7 +39,13 @@ An ultra-minimalist, "Brutalist" single-page web application for media compressi
    npm test
    ```
 
-4. Build for production:
+4. Run the browser tests:
+   ```bash
+   npx playwright install chromium
+   npm run test:e2e
+   ```
+
+5. Build for production:
    ```bash
    npm run build
    ```

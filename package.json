@@ -8,7 +8,9 @@
         "build": "vite build",
         "preview": "vite preview",
         "test": "node --test tests/*.test.js",
-        "test:ci": "npm run test && npm run build"
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui",
+        "test:ci": "npm run test && npm run test:e2e && npm run build"
     },
     "dependencies": {
         "alpinejs": "^3.13.3",
@@ -17,6 +19,7 @@
         "webm-muxer": "^5.1.4"
     },
     "devDependencies": {
+        "@playwright/test": "^1.62.1",
         "vite": "^5.0.0"
     }
 }
