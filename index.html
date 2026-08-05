@@ -282,7 +282,8 @@
                     d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" />
             </svg>
             <div id="upload-text">DROP IN FILES OR UPLOAD</div>
-            <input type="file" x-ref="fileInput" multiple class="hidden" @change="handleFiles($event)">
+            <input type="file" x-ref="fileInput" multiple class="hidden" aria-label="Upload media"
+                @change="handleFiles($event)">
         </div>
 
         <div id="file-list-container" x-show="files.length > 0" style="display: none;">
@@ -639,36 +640,42 @@
                         });
                     };
 
-                    const sizeRatio = targetBytes / file.size;
-                    let quality = Math.min(0.95, Math.max(0.1, sizeRatio * 1.2));
-                    let blob = await getBlob(quality, width, height);
+                    const encodeWithinTarget = async (w, h) => {
+                        let low = 0.01;
+                        let high = 0.95;
+                        let smallestBlob = await getBlob(low, w, h);
 
-                    if (!blob) {
-                        throw new Error(`Initial compression attempt returned no blob for "${file.name}".`);
+                        for (let i = 0; i < 7; i++) {
+                            const quality = (low + high) / 2;
+                            const candidate = await getBlob(quality, w, h);
+
+                            if (candidate.size <= targetBytes) {
+                                smallestBlob = candidate;
+                                low = quality;
+                            } else {
+                                high = quality;
+                            }
+                        }
+
+                        return smallestBlob;
+                    };
+
+                    let blob = await encodeWithinTarget(width, height);
+
+                    for (let attempt = 0; blob.size > targetBytes && attempt < 8; attempt++) {
+                        const scaleFactor = Math.min(0.9, Math.sqrt(targetBytes / blob.size) * 0.9);
+                        const nextWidth = Math.max(1, Math.floor(width * scaleFactor));
+                        const nextHeight = Math.max(1, Math.floor(height * scaleFactor));
+
+                        if (nextWidth === width && nextHeight === height) break;
+
+                        width = nextWidth;
+                        height = nextHeight;
+                        blob = await encodeWithinTarget(width, height);
                     }
 
                     if (blob.size > targetBytes) {
-                        let low = 0.05, high = quality;
-                        for (let i = 0; i < 6 && blob && blob.size > targetBytes; i++) {
-                            quality = (low + high) / 2;
-                            blob = await getBlob(quality, width, height);
-                            if (!blob) {
-                                throw new Error(`Compression iteration ${i + 1} returned no blob for "${file.name}".`);
-                            }
-                            if (blob.size > targetBytes) high = quality;
-                            else low = quality;
-                        }
-                    }
-
-                    if (blob.size > targetBytes && quality <= 0.1) {
-                        const scaleFactor = Math.sqrt(targetBytes / blob.size) * 0.9;
-                        width = Math.max(1, Math.floor(width * scaleFactor));
-                        height = Math.max(1, Math.floor(height * scaleFactor));
-                        blob = await getBlob(0.8, width, height);
-
-                        if (!blob) {
-                            throw new Error(`Downscale compression returned no blob for "${file.name}".`);
-                        }
+                        throw new Error(`Could not compress "${file.name}" below ${this.formatSize(targetBytes)}.`);
                     }
 
                     // Strip Metadata (EXIF, XMP, ICC)
