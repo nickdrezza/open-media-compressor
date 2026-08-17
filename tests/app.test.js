@@ -18,12 +18,11 @@ test('page contains upload and compress controls', () => {
     assert.match(html, /DROP IN FILES OR UPLOAD/);
 });
 
-test('required worker and utility modules exist', () => {
+test('required compression modules exist', () => {
     const requiredFiles = [
-        'src/compression.worker.js',
-        'src/gif.worker.js',
+        'src/image_compressor.js',
+        'src/video_compressor.js',
         'src/media_sanitizers.js',
-        'src/video_utils.js',
         'src/webp_utils.js',
     ];
 
