@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
-        content="Ultra-minimalist, private, browser-based media compressor. Compress images, videos, and GIFs entirely in your browser with no data leaving your device.">
+        content="Ultra-minimalist, private, browser-based compressor for photos and videos. Nothing leaves your device.">
     <meta name="keywords"
         content="media compressor, video compressor, image compressor, gif compressor, private compression, ffmpeg.wasm, brutalist ui">
     <meta name="author" content="guidrezza">
@@ -347,7 +347,8 @@
             detectFileKind,
             getUnsupportedFileMessage
         } from './src/file_types.js';
-        import { stripWebPMetadata } from './src/webp_utils.js';
+        import { compressImage } from './src/image_compressor.js';
+        import { compressVideo } from './src/video_compressor.js';
 
         window.Alpine = Alpine;
 
@@ -358,11 +359,7 @@
             maxSize: 10,
             unit: 'MB',
             capabilities: {
-                worker: false,
-                videoEncoder: false,
-                videoDecoder: false,
-                imageDecoder: false,
-                offscreenCanvas: false
+                worker: false
             },
 
             init() {
@@ -371,10 +368,6 @@
 
             probeCapabilities() {
                 this.capabilities.worker = typeof Worker !== 'undefined';
-                this.capabilities.videoEncoder = typeof VideoEncoder !== 'undefined';
-                this.capabilities.videoDecoder = typeof VideoDecoder !== 'undefined';
-                this.capabilities.imageDecoder = typeof ImageDecoder !== 'undefined';
-                this.capabilities.offscreenCanvas = typeof OffscreenCanvas !== 'undefined';
             },
 
             getMissingApis(requirements) {
@@ -383,8 +376,7 @@
 
             getSupportErrorForPath(path) {
                 const pathRequirements = {
-                    video: ['worker', 'videoEncoder', 'videoDecoder', 'offscreenCanvas'],
-                    gif: ['worker', 'videoEncoder', 'imageDecoder', 'offscreenCanvas'],
+                    video: ['worker'],
                     image: []
                 };
 
@@ -392,19 +384,11 @@
                 if (!missing.length) return null;
 
                 const messages = {
-                    worker: 'Web Workers',
-                    videoEncoder: 'WebCodecs video encoding',
-                    videoDecoder: 'WebCodecs video decoding',
-                    imageDecoder: 'ImageDecoder API',
-                    offscreenCanvas: 'OffscreenCanvas'
+                    worker: 'Web Workers'
                 };
 
                 const firstMissing = missing[0];
-                if (firstMissing === 'videoEncoder') {
-                    return 'Your browser does not support WebCodecs video encoding. Try latest Chrome/Edge.';
-                }
-
-                return `Your browser does not support ${messages[firstMissing]}. Try latest Chrome/Edge.`;
+                return `Your browser does not support ${messages[firstMissing]}. Try a current browser.`;
             },
 
             assertBrowserSupport(path) {
@@ -497,11 +481,8 @@
                                 const blob = await this.compressVideoWorker(fileObj, effectiveTargetBytes);
                                 this.finalizeFile(fileObj, blob, '.mp4');
                             } else if (path === 'image') {
-                                const blob = await this.compressImage(fileObj.raw, effectiveTargetBytes);
+                                const blob = await compressImage(fileObj.raw, effectiveTargetBytes);
                                 this.finalizeFile(fileObj, blob, '.webp');
-                            } else if (path === 'gif') {
-                                const blob = await this.compressGifWorker(fileObj, effectiveTargetBytes);
-                                this.finalizeFile(fileObj, blob, '.webm');
                             }
                         } catch (e) {
                             console.error(e);
@@ -523,166 +504,11 @@
                         return;
                     }
 
-                    // Create the worker
-                    const worker = new Worker(new URL('./src/compression.worker.js', import.meta.url), { type: 'module' });
-
-                    // CRITICAL FIX: Listen for worker initialization errors (404, SyntaxError, etc.)
-                    worker.onerror = (err) => {
-                        console.error('Worker failed to load:', err);
-                        worker.terminate();
-                        reject(new Error('Worker failed to start. Check console for details.'));
-                    };
-
-                    worker.onmessage = (e) => {
-                        const { type, value, blob, message } = e.data;
-                        if (type === 'progress') {
-                            fileObj.progress = value;
-                        } else if (type === 'done') {
-                            worker.terminate();
-                            resolve(blob);
-                        } else if (type === 'error') {
-                            worker.terminate();
-                            reject(new Error(message));
-                        } else if (type === 'status') {
-                            fileObj.statusMessage = message;
-                        }
-                    };
-
-                    worker.postMessage({
-                        file: fileObj.raw,
-                        targetSizeBytes: targetBytes
-                    });
+                    compressVideo(fileObj.raw, targetBytes, {
+                        onProgress: (value) => { fileObj.progress = value; },
+                        onStatus: (message) => { fileObj.statusMessage = message; }
+                    }).then(resolve, reject);
                 });
-            },
-
-            compressGifWorker(fileObj, targetBytes) {
-                return new Promise((resolve, reject) => {
-                    try {
-                        this.assertBrowserSupport('gif');
-                    } catch (e) {
-                        reject(e);
-                        return;
-                    }
-
-                    const worker = new Worker(new URL('./src/gif.worker.js', import.meta.url), { type: 'module' });
-
-                    worker.onerror = (err) => {
-                        console.error('GIF Worker failed to load:', err);
-                        worker.terminate();
-                        reject(new Error('GIF Worker failed to start. Run "npm install webm-muxer"?'));
-                    };
-
-                    worker.onmessage = (e) => {
-                        const { type, value, blob, message } = e.data;
-                        if (type === 'progress') {
-                            fileObj.progress = value;
-                        } else if (type === 'done') {
-                            worker.terminate();
-                            resolve(blob);
-                        } else if (type === 'error') {
-                            worker.terminate();
-                            reject(new Error(message));
-                        } else if (type === 'status') {
-                            fileObj.statusMessage = message;
-                        }
-                    };
-
-                    worker.postMessage({
-                        file: fileObj.raw,
-                        targetSizeBytes: targetBytes
-                    });
-                });
-            },
-
-            async compressImage(file, targetBytes) {
-                this.assertBrowserSupport('image');
-
-                // Ported from legacy code
-                const img = new Image();
-                const objectUrl = URL.createObjectURL(file);
-
-                try {
-                    await new Promise((resolve, reject) => {
-                        img.onload = () => {
-                            img.onload = null;
-                            img.onerror = null;
-                            resolve();
-                        };
-                        img.onerror = () => {
-                            img.onload = null;
-                            img.onerror = null;
-                            reject(new Error(`Failed to decode image file "${file.name}".`));
-                        };
-                        img.src = objectUrl;
-                    });
-
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    if (!ctx) {
-                        throw new Error(`Could not create 2D canvas context for "${file.name}".`);
-                    }
-
-                    let width = img.width;
-                    let height = img.height;
-
-                    const getBlob = (q, w, h) => {
-                        canvas.width = w;
-                        canvas.height = h;
-                        ctx.drawImage(img, 0, 0, w, h);
-                        return new Promise((resolve, reject) => {
-                            canvas.toBlob((result) => {
-                                if (!result) {
-                                    reject(new Error(`Failed to create compressed image blob for "${file.name}".`));
-                                    return;
-                                }
-                                resolve(result);
-                            }, 'image/webp', q);
-                        });
-                    };
-
-                    const encodeWithinTarget = async (w, h) => {
-                        let low = 0.01;
-                        let high = 0.95;
-                        let smallestBlob = await getBlob(low, w, h);
-
-                        for (let i = 0; i < 7; i++) {
-                            const quality = (low + high) / 2;
-                            const candidate = await getBlob(quality, w, h);
-
-                            if (candidate.size <= targetBytes) {
-                                smallestBlob = candidate;
-                                low = quality;
-                            } else {
-                                high = quality;
-                            }
-                        }
-
-                        return smallestBlob;
-                    };
-
-                    let blob = await encodeWithinTarget(width, height);
-
-                    for (let attempt = 0; blob.size > targetBytes && attempt < 8; attempt++) {
-                        const scaleFactor = Math.min(0.9, Math.sqrt(targetBytes / blob.size) * 0.9);
-                        const nextWidth = Math.max(1, Math.floor(width * scaleFactor));
-                        const nextHeight = Math.max(1, Math.floor(height * scaleFactor));
-
-                        if (nextWidth === width && nextHeight === height) break;
-
-                        width = nextWidth;
-                        height = nextHeight;
-                        blob = await encodeWithinTarget(width, height);
-                    }
-
-                    if (blob.size > targetBytes) {
-                        throw new Error(`Could not compress "${file.name}" below ${this.formatSize(targetBytes)}.`);
-                    }
-
-                    // Strip Metadata (EXIF, XMP, ICC)
-                    return await stripWebPMetadata(blob);
-                } finally {
-                    URL.revokeObjectURL(objectUrl);
-                }
             },
 
             downloadFile(blob, filename) {
