@@ -482,7 +482,7 @@
                                 this.finalizeFile(fileObj, blob, '.mp4');
                             } else if (path === 'image') {
                                 const blob = await compressImage(fileObj.raw, effectiveTargetBytes);
-                                this.finalizeFile(fileObj, blob, '.webp');
+                                this.finalizeFile(fileObj, blob, '.jpg');
                             }
                         } catch (e) {
                             console.error(e);

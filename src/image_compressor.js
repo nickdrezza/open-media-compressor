@@ -1,8 +1,7 @@
-import { stripWebPMetadata } from './webp_utils.js';
 import { fetchFile } from '@ffmpeg/util';
 import { getFFmpeg } from './video_compressor.js';
 
-const OUTPUT_TYPE = 'image/webp';
+const OUTPUT_TYPE = 'image/jpeg';
 const MIN_QUALITY = 0.02;
 const MAX_QUALITY = 0.96;
 
@@ -10,7 +9,7 @@ function canvasToBlob(canvas, quality, fileName) {
     return new Promise((resolve, reject) => {
         canvas.toBlob((blob) => {
             if (blob) resolve(blob);
-            else reject(new Error(`Failed to encode "${fileName}" as WebP.`));
+            else reject(new Error(`Failed to encode "${fileName}" as JPEG.`));
         }, OUTPUT_TYPE, quality);
     });
 }
@@ -37,7 +36,7 @@ async function compressWithFFmpeg(file, targetBytes) {
     const suffix = file.name.includes('.') ? `.${file.name.split('.').pop().toLowerCase()}` : '';
     const token = crypto.randomUUID();
     const inputName = `image-input-${token}${suffix}`;
-    const outputName = `image-output-${token}.webp`;
+    const outputName = `image-output-${token}.jpg`;
     let logs = '';
     const logger = ({ message }) => { logs += `${message}\n`; };
 
@@ -51,35 +50,37 @@ async function compressWithFFmpeg(file, targetBytes) {
         let width = Number(dimensions[1]);
         let height = Number(dimensions[2]);
 
-        const encode = async (quality) => {
-            await ffmpeg.exec([
+        const encode = async (qScale) => {
+            const filter = `[0:v]scale=${width}:${height}:flags=lanczos,format=rgba[fg];color=c=white:s=${width}x${height}[bg];[bg][fg]overlay=shortest=1,format=yuvj420p[out]`;
+            const exitCode = await ffmpeg.exec([
                 '-i', inputName, '-frames:v', '1', '-an', '-map_metadata', '-1',
-                '-vf', `scale=${width}:${height}:flags=lanczos`,
-                '-c:v', 'libwebp', '-quality', String(quality), '-compression_level', '6',
+                '-filter_complex', filter, '-map', '[out]',
+                '-c:v', 'mjpeg', '-q:v', String(qScale),
                 '-y', outputName
             ]);
+            if (exitCode !== 0) throw new Error(`Failed to encode "${file.name}" as JPEG.`);
             const data = await ffmpeg.readFile(outputName);
             return new Blob([data.buffer], { type: OUTPUT_TYPE });
         };
 
         for (let resize = 0; resize < 10; resize++) {
             let low = 2;
-            let high = 96;
+            let high = 31;
             let best = null;
-            let minimum = await encode(low);
+            let minimum = await encode(high);
             if (minimum.size <= targetBytes) best = minimum;
 
-            for (let attempt = 0; attempt < 8; attempt++) {
-                const quality = Math.round((low + high) / 2);
-                const candidate = await encode(quality);
+            for (let attempt = 0; attempt < 6 && low <= high; attempt++) {
+                const qScale = Math.floor((low + high) / 2);
+                const candidate = await encode(qScale);
                 if (candidate.size <= targetBytes) {
                     best = candidate;
-                    low = quality + 1;
+                    high = qScale - 1;
                 } else {
-                    high = quality - 1;
+                    low = qScale + 1;
                 }
             }
-            if (best) return await stripWebPMetadata(best);
+            if (best) return best;
 
             const scale = Math.min(0.9, Math.max(0.35, Math.sqrt(targetBytes / Math.max(minimum.size, 1)) * 0.94));
             const nextWidth = Math.max(1, Math.floor(width * scale));
@@ -101,6 +102,8 @@ async function bestQualityAtSize(canvas, ctx, image, width, height, targetBytes)
     canvas.height = height;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
     ctx.drawImage(image, 0, 0, width, height);
 
     let low = MIN_QUALITY;
@@ -134,7 +137,7 @@ export async function compressImage(file, targetBytes) {
 
     try {
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d', { alpha: true });
+        const ctx = canvas.getContext('2d', { alpha: false });
         if (!ctx) throw new Error(`Could not create a canvas for "${file.name}".`);
 
         let width = image.naturalWidth || image.width;
@@ -143,10 +146,7 @@ export async function compressImage(file, targetBytes) {
 
         for (let resize = 0; resize < 12; resize++) {
             const { best, minimum } = await bestQualityAtSize(canvas, ctx, image, width, height, targetBytes);
-            if (best) {
-                const sanitized = await stripWebPMetadata(best);
-                if (sanitized.size <= targetBytes) return sanitized;
-            }
+            if (best) return best;
 
             const ratio = Math.sqrt(targetBytes / Math.max(minimum.size, 1));
             const scale = Math.min(0.9, Math.max(0.35, ratio * 0.94));

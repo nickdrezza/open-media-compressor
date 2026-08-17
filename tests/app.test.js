@@ -22,8 +22,6 @@ test('required compression modules exist', () => {
     const requiredFiles = [
         'src/image_compressor.js',
         'src/video_compressor.js',
-        'src/media_sanitizers.js',
-        'src/webp_utils.js',
     ];
 
     for (const file of requiredFiles) {

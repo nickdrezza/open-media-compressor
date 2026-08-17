@@ -75,21 +75,74 @@ test('uploads, compresses, and downloads an image', async ({ page }) => {
         })
     ]);
 
-    expect(download.suggestedFilename()).toBe('browser-fixture_c.webp');
+    expect(download.suggestedFilename()).toBe('browser-fixture_c.jpg');
     const output = await download.createReadStream();
     const chunks = [];
     for await (const chunk of output) chunks.push(chunk);
     const bytes = Buffer.concat(chunks);
     expect(bytes.byteLength).toBeGreaterThan(0);
     expect(bytes.byteLength).toBeLessThanOrEqual(20 * 1024);
-    expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
+    expect([...bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
 
     await expect(page.getByText('DONE')).toBeVisible();
     expect(pageErrors).toEqual([]);
     expect(failedRequests).toEqual([]);
 });
 
-test('uses the fallback decoder for a TIFF photo and outputs WebP', async ({ page }) => {
+test('flattens transparent PNG pixels onto white in JPEG output', async ({ page }) => {
+    await page.goto('/');
+    const pngBytes = await page.evaluate(async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 600;
+        canvas.height = 400;
+        const ctx = canvas.getContext('2d');
+        const pixels = ctx.createImageData(500, 300);
+        let seed = 42;
+        for (let i = 0; i < pixels.data.length; i += 4) {
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            pixels.data[i] = seed & 255;
+            pixels.data[i + 1] = (seed >>> 8) & 255;
+            pixels.data[i + 2] = (seed >>> 16) & 255;
+            pixels.data[i + 3] = 180;
+        }
+        ctx.putImageData(pixels, 50, 50);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    });
+    await page.locator('input[type="file"]').setInputFiles({
+        name: 'transparent-art.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from(pngBytes)
+    });
+    await page.getByText('Max Size:').locator('..').getByRole('spinbutton').fill('80');
+    await page.getByRole('button', { name: 'KB' }).click();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'COMPRESS' }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('transparent-art_c.jpg');
+    const output = await download.createReadStream();
+    const chunks = [];
+    for await (const chunk of output) chunks.push(chunk);
+    const bytes = Buffer.concat(chunks);
+    expect(bytes.byteLength).toBeLessThanOrEqual(80 * 1024);
+    expect([...bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+    const corner = await page.evaluate(async payload => {
+        const blob = new Blob([Uint8Array.from(payload)], { type: 'image/jpeg' });
+        const bitmap = await createImageBitmap(blob);
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0);
+        return [...ctx.getImageData(0, 0, 1, 1).data];
+    }, Array.from(bytes));
+    expect(corner[0]).toBeGreaterThan(245);
+    expect(corner[1]).toBeGreaterThan(245);
+    expect(corner[2]).toBeGreaterThan(245);
+    expect(corner[3]).toBe(255);
+});
+
+test('uses the fallback decoder for a TIFF photo and outputs JPEG', async ({ page }) => {
     await page.goto('/');
     await page.locator('input[type="file"]').setInputFiles({
         name: 'camera-photo.tiff',
@@ -99,12 +152,12 @@ test('uses the fallback decoder for a TIFF photo and outputs WebP', async ({ pag
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'COMPRESS' }).click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe('camera-photo_c.webp');
+    expect(download.suggestedFilename()).toBe('camera-photo_c.jpg');
     const output = await download.createReadStream();
     const chunks = [];
     for await (const chunk of output) chunks.push(chunk);
     const bytes = Buffer.concat(chunks);
-    expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
+    expect([...bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
     expect(bytes.byteLength).toBeLessThanOrEqual(makeTiffFixture().byteLength);
     await expect(page.getByText('DONE')).toBeVisible();
 });
