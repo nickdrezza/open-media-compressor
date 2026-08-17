@@ -1,5 +1,15 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
+import {
+    ALL_FORMATS,
+    BlobSource,
+    BufferTarget,
+    Conversion,
+    Input,
+    Mp4OutputFormat,
+    Output,
+    Quality
+} from 'mediabunny';
 
 const coreURL = new URL('../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', import.meta.url).href;
 const wasmURL = new URL('../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', import.meta.url).href;
@@ -64,26 +74,25 @@ async function probe(ffmpeg, inputName) {
     };
 }
 
-async function encodeAttempt(ffmpeg, inputName, outputName, plan, passLog, onStatus) {
+export function buildVideoEncodeArgs(inputName, outputName, plan) {
     const videoFilter = `fps=${plan.frameRate},scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
-    const common = ['-i', inputName, '-map_metadata', '-1', '-map_chapters', '-1', '-vf', videoFilter,
-        '-c:v', 'libx264', '-preset', 'slow', '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
+    return ['-i', inputName, '-map_metadata', '-1', '-map_chapters', '-1', '-vf', videoFilter,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
         '-b:v', String(plan.videoBitrate), '-maxrate', String(Math.round(plan.videoBitrate * 1.25)),
-        '-bufsize', String(plan.videoBitrate * 2)];
+        '-bufsize', String(plan.videoBitrate * 2),
+        '-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', '-ar', '48000',
+        '-af', 'aresample=async=1:first_pts=0', outputName];
+}
 
-    onStatus?.('Optimizing video quality (pass 1 of 2)...');
-    const firstPassCode = await ffmpeg.exec([...common, '-an', '-pass', '1', '-passlogfile', passLog, '-f', 'null', '-']);
-    if (firstPassCode !== 0) throw new Error(`FFmpeg first pass failed with code ${firstPassCode}.`);
-    onStatus?.('Encoding MP4 (pass 2 of 2)...');
+async function encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus) {
+    onStatus?.('Encoding MP4...');
     let recentLogs = [];
     const logger = ({ message }) => { recentLogs = [...recentLogs.slice(-49), message]; };
     ffmpeg.on('log', logger);
-    const secondPassCode = await ffmpeg.exec([...common, '-pass', '2', '-passlogfile', passLog,
-        '-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', '-ar', '48000',
-        '-af', 'aresample=async=1:first_pts=0', outputName]);
+    const exitCode = await ffmpeg.exec(buildVideoEncodeArgs(inputName, outputName, plan));
     ffmpeg.off('log', logger);
-    if (secondPassCode !== 0) {
-        throw new Error(`FFmpeg final encode failed with code ${secondPassCode}: ${recentLogs.join(' ')}`);
+    if (exitCode !== 0) {
+        throw new Error(`FFmpeg encode failed with code ${exitCode}: ${recentLogs.join(' ')}`);
     }
 }
 
@@ -114,14 +123,99 @@ export function isCompleteMp4(data) {
     return offset === bytes.byteLength && hasFtyp && hasMoov && hasMdat;
 }
 
+function canUseAcceleratedEncoder() {
+    return typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
+}
+
+async function compressVideoAccelerated(file, targetBytes, { onProgress, onStatus } = {}) {
+    let videoBitrateScale = 1;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(file) });
+        try {
+            onStatus?.(attempt === 0 ? 'Analyzing video...' : 'Tightening the bitrate to meet the target size...');
+            const videoTrack = await input.getPrimaryVideoTrack();
+            const duration = await input.getDurationFromMetadata();
+            if (!videoTrack || !(duration > 0)) throw new Error('Could not read the video metadata.');
+
+            const [width, height] = await Promise.all([
+                videoTrack.getDisplayWidth(),
+                videoTrack.getDisplayHeight()
+            ]);
+            const basePlan = buildVideoPlan({ duration, targetBytes, width, height, frameRate: 30 });
+            const plan = {
+                ...basePlan,
+                videoBitrate: Math.max(MIN_VIDEO_BITRATE, Math.floor(basePlan.videoBitrate * videoBitrateScale))
+            };
+            const target = new BufferTarget();
+            const output = new Output({
+                format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+                target
+            });
+            const conversion = await Conversion.init({
+                input,
+                output,
+                tracks: 'primary',
+                video: {
+                    codec: 'avc',
+                    height: plan.maxHeight,
+                    frameRate: plan.frameRate,
+                    quality: new Quality({ bitrate: plan.videoBitrate, bitrateMode: 'variable' }),
+                    hardwareAcceleration: 'prefer-hardware',
+                    keyFrameInterval: 4,
+                    forceTranscode: true
+                },
+                audio: {
+                    codec: 'aac',
+                    numberOfChannels: 2,
+                    sampleRate: 48_000,
+                    quality: new Quality({ bitrate: plan.audioBitrate, bitrateMode: 'variable' }),
+                    forceTranscode: true
+                },
+                tags: {}
+            });
+            if (!conversion.isValid) {
+                const reasons = conversion.discardedTracks.map(track => track.reason).join(', ');
+                throw new Error(`This browser cannot hardware-encode this file${reasons ? ` (${reasons})` : ''}.`);
+            }
+
+            onStatus?.('Encoding MP4 with hardware acceleration...');
+            conversion.onProgress = progress => onProgress?.(Math.max(0, Math.min(99, Math.round(progress * 100))));
+            await conversion.execute();
+            if (!target.buffer) throw new Error('The accelerated encoder produced no output.');
+
+            const blob = new Blob([target.buffer], { type: 'video/mp4' });
+            if (!isCompleteMp4(target.buffer)) throw new Error('The accelerated encoder produced an incomplete MP4.');
+            if (blob.size <= targetBytes) {
+                onProgress?.(100);
+                return blob;
+            }
+            videoBitrateScale *= (targetBytes / blob.size) * 0.94;
+        } finally {
+            input.dispose();
+        }
+    }
+
+    throw new Error('The requested size is too small for this video duration. Try a larger target.');
+}
+
 export async function compressVideo(file, targetBytes, { onProgress, onStatus } = {}) {
+    if (canUseAcceleratedEncoder()) {
+        try {
+            return await compressVideoAccelerated(file, targetBytes, { onProgress, onStatus });
+        } catch (error) {
+            console.warn('Hardware-accelerated encoding unavailable; using FFmpeg fallback.', error);
+            onProgress?.(0);
+            onStatus?.('Using the compatibility video engine...');
+        }
+    }
+
     onStatus?.('Loading the video engine...');
     const ffmpeg = await getFFmpeg(onProgress);
     const extension = file.name.includes('.') ? `.${file.name.split('.').pop().toLowerCase()}` : '';
     const inputName = uniqueName('input', extension);
     const outputName = uniqueName('output', '.mp4');
-    const passLog = uniqueName('passlog');
-    const cleanup = new Set([inputName, outputName, `${passLog}-0.log`, `${passLog}-0.log.mbtree`]);
+    const cleanup = new Set([inputName, outputName]);
 
     try {
         await ffmpeg.writeFile(inputName, await fetchFile(file));
@@ -130,7 +224,7 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
         let plan = buildVideoPlan({ ...metadata, targetBytes });
 
         for (let attempt = 0; attempt < 3; attempt++) {
-            await encodeAttempt(ffmpeg, inputName, outputName, plan, passLog, onStatus);
+            await encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus);
             const data = await ffmpeg.readFile(outputName);
             if (!isCompleteMp4(data)) throw new Error('FFmpeg produced an incomplete MP4 container.');
             const blob = new Blob([data.buffer], { type: 'video/mp4' });

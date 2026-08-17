@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildVideoPlan, isCompleteMp4, parseDuration } from '../src/video_compressor.js';
+import { buildVideoEncodeArgs, buildVideoPlan, isCompleteMp4, parseDuration } from '../src/video_compressor.js';
 
 test('parseDuration reads FFmpeg probe output', () => {
     assert.equal(parseDuration('Duration: 01:02:03.50, start: 0.000000'), 3723.5);
@@ -31,4 +31,17 @@ test('buildVideoPlan reserves audio and lowers resolution for a tight budget', (
     assert.ok(plan.videoBitrate > 0);
     assert.ok(plan.audioBitrate > 0);
     assert.ok(plan.maxHeight <= 480);
+});
+
+test('video encode uses one veryfast pass and keeps the target bitrate controls', () => {
+    const args = buildVideoEncodeArgs('input.mov', 'output.mp4', {
+        frameRate: 30,
+        maxHeight: 720,
+        videoBitrate: 800_000,
+        audioBitrate: 96_000
+    });
+    assert.equal(args.filter(value => value === '-i').length, 1);
+    assert.equal(args.includes('-pass'), false);
+    assert.deepEqual(args.slice(args.indexOf('-preset'), args.indexOf('-preset') + 2), ['-preset', 'veryfast']);
+    assert.deepEqual(args.slice(args.indexOf('-b:v'), args.indexOf('-b:v') + 2), ['-b:v', '800000']);
 });
