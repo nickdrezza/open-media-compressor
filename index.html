@@ -356,8 +356,8 @@
             files: [],
             isDragging: false,
             isCompressing: false,
-            maxSize: 10,
-            unit: 'MB',
+            maxSize: 500,
+            unit: 'KB',
             capabilities: {
                 worker: false
             },
@@ -407,6 +407,17 @@
             },
 
             addFiles(fileList) {
+                if (this.files.length === 0 && fileList.length > 0) {
+                    const firstPath = this.detectFileKind(fileList[0]);
+                    if (firstPath === 'video') {
+                        this.maxSize = 20;
+                        this.unit = 'MB';
+                    } else if (firstPath === 'image') {
+                        this.maxSize = 500;
+                        this.unit = 'KB';
+                    }
+                }
+
                 for (let i = 0; i < fileList.length; i++) {
                     const path = this.detectFileKind(fileList[i]);
                     this.files.push({

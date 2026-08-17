@@ -18,6 +18,12 @@ test('page contains upload and compress controls', () => {
     assert.match(html, /DROP IN FILES OR UPLOAD/);
 });
 
+test('uses media-specific default target sizes', () => {
+    assert.match(html, /maxSize:\s*500,\s*unit:\s*'KB'/);
+    assert.match(html, /firstPath === 'video'[\s\S]*?maxSize = 20;[\s\S]*?unit = 'MB'/);
+    assert.match(html, /firstPath === 'image'[\s\S]*?maxSize = 500;[\s\S]*?unit = 'KB'/);
+});
+
 test('required compression modules exist', () => {
     const requiredFiles = [
         'src/image_compressor.js',
