@@ -1,9 +1,14 @@
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.mpeg', '.mpg']);
+const VIDEO_EXTENSIONS = new Set([
+    '.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv',
+    '.mpeg', '.mpg', '.ts', '.mts', '.m2ts', '.3gp', '.ogv', '.vob'
+]);
 
 const IMAGE_EXTENSIONS = new Set([
     '.jpg',
     '.jpeg',
+    '.jfif',
     '.png',
+    '.apng',
     '.webp',
     '.gif',
     '.bmp',
@@ -11,7 +16,8 @@ const IMAGE_EXTENSIONS = new Set([
     '.tiff',
     '.avif',
     '.heic',
-    '.heif'
+    '.heif',
+    '.svg'
 ]);
 
 export function getFileExtension(file) {

@@ -20,7 +20,11 @@ test('detectFileKind accepts common video containers', () => {
         file({ name: 'capture.mkv', type: 'video/x-matroska' }),
         file({ name: 'legacy.avi', type: 'video/x-msvideo' }),
         file({ name: 'windows.wmv', type: 'video/x-ms-wmv' }),
-        file({ name: 'flash.flv', type: 'video/x-flv' })
+        file({ name: 'flash.flv', type: 'video/x-flv' }),
+        file({ name: 'camera.mts' }),
+        file({ name: 'disc.m2ts' }),
+        file({ name: 'mobile.3gp' }),
+        file({ name: 'broadcast.ts' })
     ];
 
     for (const supportedFile of supportedFiles) {
@@ -31,7 +35,9 @@ test('detectFileKind accepts common video containers', () => {
 test('detectFileKind supports image extension fallbacks and rejects non-media', () => {
     assert.equal(detectFileKind(file({ name: 'animation.gif' })), 'image');
     assert.equal(detectFileKind(file({ name: 'photo.jpeg' })), 'image');
+    assert.equal(detectFileKind(file({ name: 'photo.jfif' })), 'image');
     assert.equal(detectFileKind(file({ name: 'graphic.webp' })), 'image');
+    assert.equal(detectFileKind(file({ name: 'vector.svg' })), 'image');
     const text = file({ name: 'notes.txt', type: 'text/plain' });
     assert.equal(detectFileKind(text), 'unsupported');
     assert.match(getUnsupportedFileMessage(text), /photos and videos only/);
