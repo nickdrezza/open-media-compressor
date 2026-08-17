@@ -214,6 +214,13 @@ test('converts a WebM video to H.264 MP4 under the target size', async ({ page }
     await page.getByText('Max Size:').locator('..').getByRole('spinbutton').fill('120');
     await page.getByRole('button', { name: 'KB' }).click();
 
+    await page.evaluate(() => {
+        window.__compressionStatuses = [];
+        const status = document.querySelector('.file-status-msg');
+        new MutationObserver(() => window.__compressionStatuses.push(status.textContent))
+            .observe(status, { childList: true, subtree: true, characterData: true });
+    });
+
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'COMPRESS' }).click();
     const download = await Promise.race([
@@ -227,6 +234,8 @@ test('converts a WebM video to H.264 MP4 under the target size', async ({ page }
     const chunks = [];
     for await (const chunk of output) chunks.push(chunk);
     const bytes = Buffer.concat(chunks);
+    const statuses = await page.evaluate(() => window.__compressionStatuses);
+    expect(statuses).toContain('Encoding MP4 with hardware acceleration...');
     expect(bytes.byteLength).toBeGreaterThan(0);
     expect(bytes.byteLength).toBeLessThanOrEqual(120 * 1024);
     expect(bytes.subarray(4, 8).toString('ascii')).toBe('ftyp');
