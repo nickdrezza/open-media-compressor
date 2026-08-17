@@ -68,7 +68,12 @@ test('uploads, compresses, and downloads an image', async ({ page }) => {
 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'COMPRESS' }).click();
-    const download = await downloadPromise;
+    const download = await Promise.race([
+        downloadPromise,
+        page.getByText('ERROR', { exact: true }).waitFor().then(async () => {
+            throw new Error(await page.locator('.file-status-msg').first().innerText());
+        })
+    ]);
 
     expect(download.suggestedFilename()).toBe('browser-fixture_c.webp');
     const output = await download.createReadStream();
@@ -158,7 +163,12 @@ test('converts a WebM video to H.264 MP4 under the target size', async ({ page }
 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'COMPRESS' }).click();
-    const download = await downloadPromise;
+    const download = await Promise.race([
+        downloadPromise,
+        page.getByText('ERROR', { exact: true }).waitFor().then(async () => {
+            throw new Error(await page.locator('.file-status-msg').first().innerText());
+        })
+    ]);
     expect(download.suggestedFilename()).toBe('browser-video_c.mp4');
     const output = await download.createReadStream();
     const chunks = [];
@@ -167,6 +177,39 @@ test('converts a WebM video to H.264 MP4 under the target size', async ({ page }
     expect(bytes.byteLength).toBeGreaterThan(0);
     expect(bytes.byteLength).toBeLessThanOrEqual(120 * 1024);
     expect(bytes.subarray(4, 8).toString('ascii')).toBe('ftyp');
+    const playback = await page.evaluate(async (payload) => {
+        const blob = new Blob([Uint8Array.from(payload)], { type: 'video/mp4' });
+        const url = URL.createObjectURL(blob);
+        const video = document.createElement('video');
+        video.src = url;
+        await new Promise((resolve, reject) => {
+            video.onloadedmetadata = resolve;
+            video.onerror = () => reject(new Error('Browser could not decode the generated MP4.'));
+        });
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaElementSource(video);
+        const analyser = audioContext.createAnalyser();
+        source.connect(analyser);
+        analyser.connect(audioContext.destination);
+        await video.play();
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const frequencies = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(frequencies);
+        const result = {
+            duration: video.duration,
+            width: video.videoWidth,
+            height: video.videoHeight,
+            audioEnergy: Math.max(...frequencies)
+        };
+        video.pause();
+        await audioContext.close();
+        URL.revokeObjectURL(url);
+        return result;
+    }, Array.from(bytes));
+    expect(playback.duration).toBeGreaterThan(1);
+    expect(playback.width).toBeGreaterThan(0);
+    expect(playback.height).toBeGreaterThan(0);
+    expect(playback.audioEnergy).toBeGreaterThan(0);
     await expect(page.getByText('DONE')).toBeVisible();
     expect(pageErrors).toEqual([]);
 });

@@ -40,7 +40,7 @@ export function buildVideoPlan({ duration, targetBytes, width = 1920, height = 1
     else if (bpp < 0.045 || videoBitrate < 900_000) maxHeight = Math.min(maxHeight, 480);
     else if (bpp < 0.075 || videoBitrate < 2_000_000) maxHeight = Math.min(maxHeight, 720);
     else maxHeight = Math.min(maxHeight, 1080);
-    return { audioBitrate, videoBitrate, maxHeight };
+    return { audioBitrate, videoBitrate, maxHeight, frameRate: Math.max(1, Math.min(30, frameRate || 30)) };
 }
 
 function uniqueName(prefix, extension = '') {
@@ -65,17 +65,53 @@ async function probe(ffmpeg, inputName) {
 }
 
 async function encodeAttempt(ffmpeg, inputName, outputName, plan, passLog, onStatus) {
-    const scale = `scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
-    const common = ['-i', inputName, '-map_metadata', '-1', '-map_chapters', '-1', '-vf', scale,
+    const videoFilter = `fps=${plan.frameRate},scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
+    const common = ['-i', inputName, '-map_metadata', '-1', '-map_chapters', '-1', '-vf', videoFilter,
         '-c:v', 'libx264', '-preset', 'slow', '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
         '-b:v', String(plan.videoBitrate), '-maxrate', String(Math.round(plan.videoBitrate * 1.25)),
-        '-bufsize', String(plan.videoBitrate * 2), '-movflags', '+faststart'];
+        '-bufsize', String(plan.videoBitrate * 2)];
 
     onStatus?.('Optimizing video quality (pass 1 of 2)...');
-    await ffmpeg.exec([...common, '-an', '-pass', '1', '-passlogfile', passLog, '-f', 'null', '-']);
+    const firstPassCode = await ffmpeg.exec([...common, '-an', '-pass', '1', '-passlogfile', passLog, '-f', 'null', '-']);
+    if (firstPassCode !== 0) throw new Error(`FFmpeg first pass failed with code ${firstPassCode}.`);
     onStatus?.('Encoding MP4 (pass 2 of 2)...');
-    await ffmpeg.exec([...common, '-pass', '2', '-passlogfile', passLog,
-        '-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', outputName]);
+    let recentLogs = [];
+    const logger = ({ message }) => { recentLogs = [...recentLogs.slice(-49), message]; };
+    ffmpeg.on('log', logger);
+    const secondPassCode = await ffmpeg.exec([...common, '-pass', '2', '-passlogfile', passLog,
+        '-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', '-ar', '48000',
+        '-af', 'aresample=async=1:first_pts=0', outputName]);
+    ffmpeg.off('log', logger);
+    if (secondPassCode !== 0) {
+        throw new Error(`FFmpeg final encode failed with code ${secondPassCode}: ${recentLogs.join(' ')}`);
+    }
+}
+
+export function isCompleteMp4(data) {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    let offset = 0;
+    let hasFtyp = false;
+    let hasMoov = false;
+    let hasMdat = false;
+    while (offset + 8 <= bytes.byteLength) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset + offset, bytes.byteLength - offset);
+        let size = view.getUint32(0);
+        const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+        let headerSize = 8;
+        if (size === 1) {
+            if (offset + 16 > bytes.byteLength) return false;
+            size = Number(view.getBigUint64(8));
+            headerSize = 16;
+        } else if (size === 0) {
+            size = bytes.byteLength - offset;
+        }
+        if (size < headerSize || offset + size > bytes.byteLength) return false;
+        if (type === 'ftyp') hasFtyp = true;
+        if (type === 'moov') hasMoov = true;
+        if (type === 'mdat') hasMdat = true;
+        offset += size;
+    }
+    return offset === bytes.byteLength && hasFtyp && hasMoov && hasMdat;
 }
 
 export async function compressVideo(file, targetBytes, { onProgress, onStatus } = {}) {
@@ -96,6 +132,7 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
         for (let attempt = 0; attempt < 3; attempt++) {
             await encodeAttempt(ffmpeg, inputName, outputName, plan, passLog, onStatus);
             const data = await ffmpeg.readFile(outputName);
+            if (!isCompleteMp4(data)) throw new Error('FFmpeg produced an incomplete MP4 container.');
             const blob = new Blob([data.buffer], { type: 'video/mp4' });
             if (blob.size <= targetBytes) {
                 onProgress?.(100);
