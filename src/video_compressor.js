@@ -64,26 +64,25 @@ async function probe(ffmpeg, inputName) {
     };
 }
 
-async function encodeAttempt(ffmpeg, inputName, outputName, plan, passLog, onStatus) {
+export function buildVideoEncodeArgs(inputName, outputName, plan) {
     const videoFilter = `fps=${plan.frameRate},scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
-    const common = ['-i', inputName, '-map_metadata', '-1', '-map_chapters', '-1', '-vf', videoFilter,
-        '-c:v', 'libx264', '-preset', 'slow', '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
+    return ['-i', inputName, '-map_metadata', '-1', '-map_chapters', '-1', '-vf', videoFilter,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
         '-b:v', String(plan.videoBitrate), '-maxrate', String(Math.round(plan.videoBitrate * 1.25)),
-        '-bufsize', String(plan.videoBitrate * 2)];
+        '-bufsize', String(plan.videoBitrate * 2),
+        '-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', '-ar', '48000',
+        '-af', 'aresample=async=1:first_pts=0', outputName];
+}
 
-    onStatus?.('Optimizing video quality (pass 1 of 2)...');
-    const firstPassCode = await ffmpeg.exec([...common, '-an', '-pass', '1', '-passlogfile', passLog, '-f', 'null', '-']);
-    if (firstPassCode !== 0) throw new Error(`FFmpeg first pass failed with code ${firstPassCode}.`);
-    onStatus?.('Encoding MP4 (pass 2 of 2)...');
+async function encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus) {
+    onStatus?.('Encoding MP4...');
     let recentLogs = [];
     const logger = ({ message }) => { recentLogs = [...recentLogs.slice(-49), message]; };
     ffmpeg.on('log', logger);
-    const secondPassCode = await ffmpeg.exec([...common, '-pass', '2', '-passlogfile', passLog,
-        '-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', '-ar', '48000',
-        '-af', 'aresample=async=1:first_pts=0', outputName]);
+    const exitCode = await ffmpeg.exec(buildVideoEncodeArgs(inputName, outputName, plan));
     ffmpeg.off('log', logger);
-    if (secondPassCode !== 0) {
-        throw new Error(`FFmpeg final encode failed with code ${secondPassCode}: ${recentLogs.join(' ')}`);
+    if (exitCode !== 0) {
+        throw new Error(`FFmpeg encode failed with code ${exitCode}: ${recentLogs.join(' ')}`);
     }
 }
 
@@ -120,8 +119,7 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
     const extension = file.name.includes('.') ? `.${file.name.split('.').pop().toLowerCase()}` : '';
     const inputName = uniqueName('input', extension);
     const outputName = uniqueName('output', '.mp4');
-    const passLog = uniqueName('passlog');
-    const cleanup = new Set([inputName, outputName, `${passLog}-0.log`, `${passLog}-0.log.mbtree`]);
+    const cleanup = new Set([inputName, outputName]);
 
     try {
         await ffmpeg.writeFile(inputName, await fetchFile(file));
@@ -130,7 +128,7 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
         let plan = buildVideoPlan({ ...metadata, targetBytes });
 
         for (let attempt = 0; attempt < 3; attempt++) {
-            await encodeAttempt(ffmpeg, inputName, outputName, plan, passLog, onStatus);
+            await encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus);
             const data = await ffmpeg.readFile(outputName);
             if (!isCompleteMp4(data)) throw new Error('FFmpeg produced an incomplete MP4 container.');
             const blob = new Blob([data.buffer], { type: 'video/mp4' });

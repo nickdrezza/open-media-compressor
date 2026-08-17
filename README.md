@@ -5,7 +5,7 @@ An ultra-minimalist, "Brutalist" single-page web application for private media c
 ## Features
 
 - **Privacy First**: All processing happens locally on your device. No data is ever sent to a server.
-- **Videos**: Common video formats are converted to broadly compatible **H.264/AAC MP4** using a two-pass FFmpeg encode and verified against the requested size.
+- **Videos**: Common video formats are converted to broadly compatible **H.264/AAC MP4** using a fast adaptive FFmpeg encode and verified against the requested size.
 - **Images**: Common image formats are converted to universally previewable **JPEG**, preserving resolution when possible and resizing only when quality alone cannot meet the target. Transparency is flattened onto white.
 - **Private**: FFmpeg runs locally in a Web Worker. Media never leaves the device.
 - **Brutalist Aesthetic**: Built with a sleek, high-contrast dark mode using **Alpine.js**.
