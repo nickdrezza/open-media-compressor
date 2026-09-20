@@ -2,8 +2,9 @@ import {
     detectFileKind as defaultDetectFileKind,
     getUnsupportedFileMessage as defaultGetUnsupportedFileMessage
 } from './file_types.js';
-import { compressImage as defaultCompressImage } from './image_compressor.js';
-import { compressVideo as defaultCompressVideo } from './video_compressor.js';
+
+const loadImageCompressor = () => import('./image_compressor.js').then(module => module.compressImage);
+const loadVideoCompressor = () => import('./video_compressor.js').then(module => module.compressVideo);
 
 export function normalizeError(error) {
     if (error instanceof Error && error.message) return error.message;
@@ -26,12 +27,36 @@ function downloadBlob(blob, filename) {
 export function createCompressorApp({
     detectFileKind = defaultDetectFileKind,
     getUnsupportedFileMessage = defaultGetUnsupportedFileMessage,
-    compressImage = defaultCompressImage,
-    compressVideo = defaultCompressVideo,
+    compressImage,
+    compressVideo,
     downloadFile = downloadBlob,
+    reloadApp = () => globalThis.location?.reload?.(),
     diagnosticConsole = globalThis.console
 } = {}) {
     const logger = diagnosticConsole || { error() {} };
+    let imageCompressorPromise;
+    let videoCompressorPromise;
+
+    function loadCompressor(path) {
+        if (path === 'video') {
+            if (typeof compressVideo === 'function') return Promise.resolve(compressVideo);
+            videoCompressorPromise ??= loadVideoCompressor();
+            return videoCompressorPromise;
+        }
+        if (typeof compressImage === 'function') return Promise.resolve(compressImage);
+        imageCompressorPromise ??= loadImageCompressor();
+        return imageCompressorPromise;
+    }
+
+    function compressorLoadError(path, error) {
+        const label = path === 'video' ? 'video' : 'image';
+        const wrapped = new Error(
+            `Could not load the ${label} compressor. Reload the page and try again.`,
+            { cause: error }
+        );
+        wrapped.code = 'COMPRESSOR_MODULE_LOAD_FAILED';
+        return wrapped;
+    }
 
     return {
         files: [],
@@ -41,6 +66,7 @@ export function createCompressorApp({
         unit: 'KB',
         validationError: '',
         phaseMessage: '',
+        reloadAvailable: false,
 
         handleDrop(event) {
             this.isDragging = false;
@@ -116,6 +142,10 @@ export function createCompressorApp({
             throw new Error(getUnsupportedFileMessage(file));
         },
 
+        reloadPage() {
+            return reloadApp();
+        },
+
         finalizeFile(fileObj, blob, newExt, effectiveTargetBytes) {
             const outputBytes = Number(blob?.size);
             if (!Number.isFinite(outputBytes) || outputBytes < 1) {
@@ -137,6 +167,7 @@ export function createCompressorApp({
             if (targetBytes === null) return;
 
             this.isCompressing = true;
+            this.reloadAvailable = false;
             this.phaseMessage = 'Preparing compression...';
 
             try {
@@ -158,7 +189,13 @@ export function createCompressorApp({
                         this.assertFileSupport(path, fileObj.raw);
 
                         if (path === 'video') {
-                            const blob = await compressVideo(fileObj.raw, effectiveTargetBytes, {
+                            let compressor;
+                            try {
+                                compressor = await loadCompressor(path);
+                            } catch (error) {
+                                throw compressorLoadError(path, error);
+                            }
+                            const blob = await compressor(fileObj.raw, effectiveTargetBytes, {
                                 onProgress: value => { fileObj.progress = value; },
                                 onStatus: message => {
                                     fileObj.statusMessage = message;
@@ -169,13 +206,20 @@ export function createCompressorApp({
                         } else if (path === 'image') {
                             fileObj.statusMessage = 'Compressing image...';
                             this.phaseMessage = `Compressing ${fileObj.raw.name}...`;
-                            const blob = await compressImage(fileObj.raw, effectiveTargetBytes);
+                            let compressor;
+                            try {
+                                compressor = await loadCompressor(path);
+                            } catch (error) {
+                                throw compressorLoadError(path, error);
+                            }
+                            const blob = await compressor(fileObj.raw, effectiveTargetBytes);
                             this.finalizeFile(fileObj, blob, '.jpg', effectiveTargetBytes);
                         }
                     } catch (error) {
                         logger.error('Compression failed.', error);
                         fileObj.status = 'error';
                         fileObj.statusMessage = normalizeError(error);
+                        if (error?.code === 'COMPRESSOR_MODULE_LOAD_FAILED') this.reloadAvailable = true;
                         this.phaseMessage = `Could not compress ${fileObj.raw.name}.`;
                     }
                 }

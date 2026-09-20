@@ -1,6 +1,3 @@
-import { fetchFile } from '@ffmpeg/util';
-import { withFFmpeg } from './ffmpeg_engine.js';
-
 const OUTPUT_TYPE = 'image/jpeg';
 const MIN_QUALITY = 0.02;
 const MAX_QUALITY = 0.96;
@@ -127,8 +124,11 @@ async function findNativeQuality(canvas, ctx, image, width, height, targetBytes,
     return { best, minimum };
 }
 
-async function compressWithFFmpeg(file, targetBytes, withFFmpegRunner = withFFmpeg) {
+async function compressWithFFmpeg(file, targetBytes, withFFmpegRunner) {
     const fileName = sourceName(file);
+    const { fetchFile } = await import('@ffmpeg/util');
+    const runWithFFmpeg = withFFmpegRunner
+        ?? (await import('./ffmpeg_engine.js')).withFFmpeg;
     const suffix = fileName.includes('.') ? `.${fileName.split('.').pop().toLowerCase()}` : '';
     const token = crypto.randomUUID();
     const inputName = `image-input-${token}${suffix}`;
@@ -136,7 +136,7 @@ async function compressWithFFmpeg(file, targetBytes, withFFmpegRunner = withFFmp
     let logs = '';
     const logger = ({ message }) => { logs += `${message}\n`; };
 
-    return withFFmpegRunner({}, async ffmpeg => {
+    return runWithFFmpeg({}, async ffmpeg => {
         try {
             const input = await fetchFile(file);
             if (!input || input.byteLength === 0) {
@@ -218,7 +218,7 @@ async function compressWithFFmpeg(file, targetBytes, withFFmpegRunner = withFFmp
     });
 }
 
-export async function compressImage(file, targetBytes, { withFFmpegRunner = withFFmpeg } = {}) {
+export async function compressImage(file, targetBytes, { withFFmpegRunner } = {}) {
     validateRequest(file, targetBytes);
     const fileName = sourceName(file);
 

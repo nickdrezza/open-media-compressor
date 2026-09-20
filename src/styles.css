@@ -179,6 +179,17 @@ header h1 {
     font-size: 0.8rem;
 }
 
+#reload-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    min-height: var(--control-height);
+    padding: 8px 14px;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
 #controls-area {
     display: flex;
     flex-direction: column;
