@@ -1,5 +1,5 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
+import { getFFmpeg, withFFmpeg } from './ffmpeg_engine.js';
 import {
     ALL_FORMATS,
     BlobSource,
@@ -11,27 +11,9 @@ import {
     Quality
 } from 'mediabunny';
 
-const coreURL = new URL('../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', import.meta.url).href;
-const wasmURL = new URL('../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', import.meta.url).href;
 const MIN_VIDEO_BITRATE = 60_000;
 
-let ffmpegPromise;
-let activeProgressHandler;
-
-export async function getFFmpeg(onProgress) {
-    if (!ffmpegPromise) {
-        ffmpegPromise = (async () => {
-            const ffmpeg = new FFmpeg();
-            await ffmpeg.load({ coreURL, wasmURL });
-            return ffmpeg;
-        })();
-    }
-    const ffmpeg = await ffmpegPromise;
-    if (activeProgressHandler) ffmpeg.off('progress', activeProgressHandler);
-    activeProgressHandler = ({ progress }) => onProgress?.(Math.max(0, Math.min(99, Math.round(progress * 100))));
-    ffmpeg.on('progress', activeProgressHandler);
-    return ffmpeg;
-}
+export { getFFmpeg, withFFmpeg };
 
 export function parseDuration(logText) {
     const match = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(logText);
@@ -211,37 +193,38 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
     }
 
     onStatus?.('Loading the video engine...');
-    const ffmpeg = await getFFmpeg(onProgress);
     const extension = file.name.includes('.') ? `.${file.name.split('.').pop().toLowerCase()}` : '';
     const inputName = uniqueName('input', extension);
     const outputName = uniqueName('output', '.mp4');
     const cleanup = new Set([inputName, outputName]);
 
-    try {
-        await ffmpeg.writeFile(inputName, await fetchFile(file));
-        onStatus?.('Analyzing video...');
-        const metadata = await probe(ffmpeg, inputName);
-        let plan = buildVideoPlan({ ...metadata, targetBytes });
+    return withFFmpeg({ onProgress }, async ffmpeg => {
+        try {
+            await ffmpeg.writeFile(inputName, await fetchFile(file));
+            onStatus?.('Analyzing video...');
+            const metadata = await probe(ffmpeg, inputName);
+            let plan = buildVideoPlan({ ...metadata, targetBytes });
 
-        for (let attempt = 0; attempt < 3; attempt++) {
-            await encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus);
-            const data = await ffmpeg.readFile(outputName);
-            if (!isCompleteMp4(data)) throw new Error('FFmpeg produced an incomplete MP4 container.');
-            const blob = new Blob([data.buffer], { type: 'video/mp4' });
-            if (blob.size <= targetBytes) {
-                onProgress?.(100);
-                return blob;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                await encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus);
+                const data = await ffmpeg.readFile(outputName);
+                if (!isCompleteMp4(data)) throw new Error('FFmpeg produced an incomplete MP4 container.');
+                const blob = new Blob([data.buffer], { type: 'video/mp4' });
+                if (blob.size <= targetBytes) {
+                    onProgress?.(100);
+                    return blob;
+                }
+                plan = {
+                    ...plan,
+                    videoBitrate: Math.max(MIN_VIDEO_BITRATE, Math.floor(plan.videoBitrate * (targetBytes / blob.size) * 0.94))
+                };
+                onStatus?.('Tightening the bitrate to meet the target size...');
+                await ffmpeg.deleteFile(outputName).catch(() => {});
             }
-            plan = {
-                ...plan,
-                videoBitrate: Math.max(MIN_VIDEO_BITRATE, Math.floor(plan.videoBitrate * (targetBytes / blob.size) * 0.94))
-            };
-            onStatus?.('Tightening the bitrate to meet the target size...');
-            await ffmpeg.deleteFile(outputName).catch(() => {});
-        }
 
-        throw new Error('The requested size is too small for this video duration. Try a larger target.');
-    } finally {
-        for (const name of cleanup) await ffmpeg.deleteFile(name).catch(() => {});
-    }
+            throw new Error('The requested size is too small for this video duration. Try a larger target.');
+        } finally {
+            for (const name of cleanup) await ffmpeg.deleteFile(name).catch(() => {});
+        }
+    });
 }

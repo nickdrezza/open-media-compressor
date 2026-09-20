@@ -1,5 +1,5 @@
 import { fetchFile } from '@ffmpeg/util';
-import { getFFmpeg } from './video_compressor.js';
+import { withFFmpeg } from './ffmpeg_engine.js';
 
 const OUTPUT_TYPE = 'image/jpeg';
 const MIN_QUALITY = 0.02;
@@ -32,7 +32,6 @@ async function decodeImage(file) {
 }
 
 async function compressWithFFmpeg(file, targetBytes) {
-    const ffmpeg = await getFFmpeg();
     const suffix = file.name.includes('.') ? `.${file.name.split('.').pop().toLowerCase()}` : '';
     const token = crypto.randomUUID();
     const inputName = `image-input-${token}${suffix}`;
@@ -40,61 +39,63 @@ async function compressWithFFmpeg(file, targetBytes) {
     let logs = '';
     const logger = ({ message }) => { logs += `${message}\n`; };
 
-    try {
-        await ffmpeg.writeFile(inputName, await fetchFile(file));
-        ffmpeg.on('log', logger);
-        await ffmpeg.exec(['-i', inputName]);
-        ffmpeg.off('log', logger);
-        const dimensions = /(\d{2,6})x(\d{2,6})/.exec(logs);
-        if (!dimensions) throw new Error(`Failed to read image file "${file.name}".`);
-        let width = Number(dimensions[1]);
-        let height = Number(dimensions[2]);
+    return withFFmpeg({}, async ffmpeg => {
+        try {
+            await ffmpeg.writeFile(inputName, await fetchFile(file));
+            ffmpeg.on('log', logger);
+            await ffmpeg.exec(['-i', inputName]);
+            ffmpeg.off('log', logger);
+            const dimensions = /(\d{2,6})x(\d{2,6})/.exec(logs);
+            if (!dimensions) throw new Error(`Failed to read image file "${file.name}".`);
+            let width = Number(dimensions[1]);
+            let height = Number(dimensions[2]);
 
-        const encode = async (qScale) => {
-            const filter = `[0:v]scale=${width}:${height}:flags=lanczos,format=rgba[fg];color=c=white:s=${width}x${height}[bg];[bg][fg]overlay=shortest=1,format=yuvj420p[out]`;
-            const exitCode = await ffmpeg.exec([
-                '-i', inputName, '-frames:v', '1', '-an', '-map_metadata', '-1',
-                '-filter_complex', filter, '-map', '[out]',
-                '-c:v', 'mjpeg', '-q:v', String(qScale),
-                '-y', outputName
-            ]);
-            if (exitCode !== 0) throw new Error(`Failed to encode "${file.name}" as JPEG.`);
-            const data = await ffmpeg.readFile(outputName);
-            return new Blob([data.buffer], { type: OUTPUT_TYPE });
-        };
+            const encode = async (qScale) => {
+                const filter = `[0:v]scale=${width}:${height}:flags=lanczos,format=rgba[fg];color=c=white:s=${width}x${height}[bg];[bg][fg]overlay=shortest=1,format=yuvj420p[out]`;
+                const exitCode = await ffmpeg.exec([
+                    '-i', inputName, '-frames:v', '1', '-an', '-map_metadata', '-1',
+                    '-filter_complex', filter, '-map', '[out]',
+                    '-c:v', 'mjpeg', '-q:v', String(qScale),
+                    '-y', outputName
+                ]);
+                if (exitCode !== 0) throw new Error(`Failed to encode "${file.name}" as JPEG.`);
+                const data = await ffmpeg.readFile(outputName);
+                return new Blob([data.buffer], { type: OUTPUT_TYPE });
+            };
 
-        for (let resize = 0; resize < 10; resize++) {
-            let low = 2;
-            let high = 31;
-            let best = null;
-            let minimum = await encode(high);
-            if (minimum.size <= targetBytes) best = minimum;
+            for (let resize = 0; resize < 10; resize++) {
+                let low = 2;
+                let high = 31;
+                let best = null;
+                let minimum = await encode(high);
+                if (minimum.size <= targetBytes) best = minimum;
 
-            for (let attempt = 0; attempt < 6 && low <= high; attempt++) {
-                const qScale = Math.floor((low + high) / 2);
-                const candidate = await encode(qScale);
-                if (candidate.size <= targetBytes) {
-                    best = candidate;
-                    high = qScale - 1;
-                } else {
-                    low = qScale + 1;
+                for (let attempt = 0; attempt < 6 && low <= high; attempt++) {
+                    const qScale = Math.floor((low + high) / 2);
+                    const candidate = await encode(qScale);
+                    if (candidate.size <= targetBytes) {
+                        best = candidate;
+                        high = qScale - 1;
+                    } else {
+                        low = qScale + 1;
+                    }
                 }
-            }
-            if (best) return best;
+                if (best) return best;
 
-            const scale = Math.min(0.9, Math.max(0.35, Math.sqrt(targetBytes / Math.max(minimum.size, 1)) * 0.94));
-            const nextWidth = Math.max(1, Math.floor(width * scale));
-            const nextHeight = Math.max(1, Math.floor(height * scale));
-            if (nextWidth === width && nextHeight === height) break;
-            width = nextWidth;
-            height = nextHeight;
+                const scale = Math.min(0.9, Math.max(0.35, Math.sqrt(targetBytes / Math.max(minimum.size, 1)) * 0.94));
+                const nextWidth = Math.max(1, Math.floor(width * scale));
+                const nextHeight = Math.max(1, Math.floor(height * scale));
+                if (nextWidth === width && nextHeight === height) break;
+                width = nextWidth;
+                height = nextHeight;
+            }
+            throw new Error(`Could not compress "${file.name}" below the requested size.`);
+        } finally {
+            ffmpeg.off('log', logger);
+            await ffmpeg.deleteFile(inputName).catch(() => {});
+            await ffmpeg.deleteFile(outputName).catch(() => {});
         }
-        throw new Error(`Could not compress "${file.name}" below the requested size.`);
-    } finally {
-        ffmpeg.off('log', logger);
-        await ffmpeg.deleteFile(inputName).catch(() => {});
-        await ffmpeg.deleteFile(outputName).catch(() => {});
-    }
+    });
 }
 
 async function bestQualityAtSize(canvas, ctx, image, width, height, targetBytes) {
