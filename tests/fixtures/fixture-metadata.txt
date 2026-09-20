@@ -1,0 +1,9 @@
+;FFMETADATA1
+comment=omc-l6-source-marker
+title=Open Media Compressor L6 synthetic fixture
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=1200
+title=synthetic chapter that must be stripped

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { readDownloadBytes } from './support/media.js';
 
 async function makeRasterFixture(page, width, height) {
     return page.evaluate(async ({ width, height }) => {
@@ -19,13 +20,6 @@ async function makeRasterFixture(page, width, height) {
         const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         return Array.from(new Uint8Array(await blob.arrayBuffer()));
     }, { width, height });
-}
-
-async function readDownload(download) {
-    const stream = await download.createReadStream();
-    const chunks = [];
-    for await (const chunk of stream) chunks.push(chunk);
-    return Buffer.concat(chunks);
 }
 
 async function installQualityProbe(page) {
@@ -58,7 +52,7 @@ test('keeps high-quality output when the maximum-quality candidate fits', async 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'COMPRESS' }).click();
     const download = await downloadPromise;
-    const bytes = await readDownload(download);
+    const bytes = await readDownloadBytes(download);
     const calls = await page.evaluate(() => window.__imageQualityCalls);
 
     expect(download.suggestedFilename()).toBe('quality-first_c.jpg');
@@ -92,7 +86,7 @@ test('resizes before searching quality when minimum-quality output is too large'
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'COMPRESS' }).click();
     const download = await downloadPromise;
-    const bytes = await readDownload(download);
+    const bytes = await readDownloadBytes(download);
     const calls = await page.evaluate(() => window.__imageQualityCalls);
     const output = await page.evaluate(async payload => {
         const bitmap = await createImageBitmap(new Blob([Uint8Array.from(payload)], { type: 'image/jpeg' }));
