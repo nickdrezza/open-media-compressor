@@ -85,6 +85,46 @@ test('target byte overflow is rejected and validation can clear', () => {
     assert.equal(app.validationError, '');
 });
 
+test('invalid source byte counts become row errors without invoking compression or download', async () => {
+    let compressCalls = 0;
+    let downloadCalls = 0;
+    const app = createCompressorApp({
+        detectFileKind: () => 'image',
+        compressImage: async () => { compressCalls += 1; return new Blob(['output']); },
+        downloadFile: () => { downloadCalls += 1; }
+    });
+    app.addFiles([imageFile('empty.png', 0)]);
+
+    await app.startCompression();
+
+    assert.equal(compressCalls, 0);
+    assert.equal(downloadCalls, 0);
+    assert.equal(app.files[0].status, 'error');
+    assert.match(app.files[0].statusMessage, /positive finite byte count/);
+});
+
+test('empty or oversized compressor output becomes a visible error without downloading', async () => {
+    for (const [name, output, expectedMessage] of [
+        ['empty-output.png', new Blob([]), /empty or invalid output/],
+        ['oversized-output.png', new Blob([new Uint8Array(2_000)]), /exceeds the requested target/]
+    ]) {
+        let downloadCalls = 0;
+        const app = createCompressorApp({
+            detectFileKind: () => 'image',
+            compressImage: async () => output,
+            downloadFile: () => { downloadCalls += 1; }
+        });
+        app.addFiles([imageFile(name, 10_000)]);
+        app.maxSize = 1;
+
+        await app.startCompression();
+
+        assert.equal(downloadCalls, 0);
+        assert.equal(app.files[0].status, 'error');
+        assert.match(app.files[0].statusMessage, expectedMessage);
+    }
+});
+
 test('compression captures one target and processes appended files sequentially', async () => {
     const targets = [];
     let app;
