@@ -12,6 +12,80 @@ import {
 } from 'mediabunny';
 
 const MIN_VIDEO_BITRATE = 60_000;
+const MIN_AUDIO_BITRATE = 64_000;
+const MAX_OUTPUT_FRAME_RATE = 30;
+const DEFAULT_FRAME_RATE = 30;
+export const ACCELERATED_STATUS = 'Using browser video codecs...';
+const SUPPORTED_FRAME_RATES = [
+    { value: 23.976, aliases: [24000 / 1001] },
+    { value: 24 },
+    { value: 25 },
+    { value: 29.97, aliases: [30000 / 1001] },
+    { value: 30 },
+    { value: 59.94, aliases: [60000 / 1001] },
+    { value: 60 }
+];
+
+export class VideoTargetSizeError extends Error {
+    constructor(message = 'The requested size is too small for this video duration. Try a larger target.') {
+        super(message);
+        this.name = 'VideoTargetSizeError';
+        this.code = 'VIDEO_TARGET_SIZE_EXHAUSTED';
+    }
+}
+
+export class VideoTargetLimitError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'VideoTargetLimitError';
+        this.code = 'VIDEO_TARGET_BELOW_APP_MINIMUM';
+    }
+}
+
+class AcceleratedEncoderError extends Error {
+    constructor(message, cause) {
+        super(message, cause ? { cause } : undefined);
+        this.name = 'AcceleratedEncoderError';
+        this.code = 'ACCELERATED_ENCODER_UNAVAILABLE';
+    }
+}
+
+function normalizeFrameRate(value) {
+    if (!Number.isFinite(value) || value <= 0) return DEFAULT_FRAME_RATE;
+    const match = SUPPORTED_FRAME_RATES
+        .map(rate => ({ rate, difference: Math.min(...[rate.value, ...(rate.aliases ?? [])].map(candidate => Math.abs(value - candidate))) }))
+        .filter(candidate => candidate.difference <= 0.04)
+        .sort((left, right) => left.difference - right.difference)[0];
+    return match?.rate.value ?? Math.min(MAX_OUTPUT_FRAME_RATE, value);
+}
+
+function parseFrameRate(value) {
+    if (!value) return DEFAULT_FRAME_RATE;
+    const [numerator, denominator] = value.split('/').map(Number);
+    return normalizeFrameRate(denominator ? numerator / denominator : numerator);
+}
+
+function isStreamLine(line, kind) {
+    return new RegExp(`Stream #0:\\d+[^:\\n]*:\\s*${kind}:`).test(line);
+}
+
+export function parseVideoProbe(logText) {
+    const lines = String(logText ?? '').split(/\r?\n/);
+    const videoLine = lines.find(line => isStreamLine(line, 'Video'));
+    const dimensionMatch = videoLine?.match(/(\d{2,5})x(\d{2,5})(?=\s|,|\[|$)/);
+    const frameRateMatch = videoLine?.match(/(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s+fps\b/);
+
+    return {
+        width: dimensionMatch ? Number(dimensionMatch[1]) : 1920,
+        height: dimensionMatch ? Number(dimensionMatch[2]) : 1080,
+        frameRate: parseFrameRate(frameRateMatch?.[1]),
+        hasAudio: lines.some(line => isStreamLine(line, 'Audio'))
+    };
+}
+
+export function selectVideoFrameRate(frameRateMetrics) {
+    return normalizeFrameRate(frameRateMetrics?.bestGuessFrameRate);
+}
 
 export { getFFmpeg, withFFmpeg };
 
@@ -21,18 +95,47 @@ export function parseDuration(logText) {
     return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
 }
 
-export function buildVideoPlan({ duration, targetBytes, width = 1920, height = 1080, frameRate = 30 }) {
+export function buildVideoPlan({
+    duration,
+    targetBytes,
+    width = 1920,
+    height = 1080,
+    frameRate = DEFAULT_FRAME_RATE,
+    hasAudio = true
+}) {
     if (!(duration > 0) || !(targetBytes > 0)) throw new Error('Invalid video duration or target size.');
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+        throw new Error('Invalid video dimensions: width and height must be finite positive numbers.');
+    }
     const totalBitrate = Math.floor((targetBytes * 8 * 0.965) / duration);
-    const audioBitrate = totalBitrate >= 900_000 ? 128_000 : totalBitrate >= 450_000 ? 96_000 : 64_000;
+    const audioBitrate = hasAudio
+        ? totalBitrate >= 900_000 ? 128_000 : totalBitrate >= 450_000 ? 96_000 : MIN_AUDIO_BITRATE
+        : 0;
+    const minimumBitrate = MIN_VIDEO_BITRATE + (hasAudio ? MIN_AUDIO_BITRATE : 0);
+    if (totalBitrate < minimumBitrate) {
+        throw new VideoTargetLimitError(
+            `Target size is below the app minimum bitrate policy of ${minimumBitrate} bits per second `
+            + `for ${hasAudio ? 'video with audio' : 'silent video'}.`
+        );
+    }
     const videoBitrate = Math.max(MIN_VIDEO_BITRATE, totalBitrate - audioBitrate);
-    const bpp = videoBitrate / Math.max(1, width * height * frameRate);
+    const normalizedFrameRate = Math.min(MAX_OUTPUT_FRAME_RATE, normalizeFrameRate(frameRate));
+    const bpp = videoBitrate / Math.max(1, width * height * normalizedFrameRate);
     let maxHeight = height;
     if (bpp < 0.025 || videoBitrate < 450_000) maxHeight = Math.min(maxHeight, 360);
     else if (bpp < 0.045 || videoBitrate < 900_000) maxHeight = Math.min(maxHeight, 480);
     else if (bpp < 0.075 || videoBitrate < 2_000_000) maxHeight = Math.min(maxHeight, 720);
     else maxHeight = Math.min(maxHeight, 1080);
-    return { audioBitrate, videoBitrate, maxHeight, frameRate: Math.max(1, Math.min(30, frameRate || 30)) };
+    return { audioBitrate, videoBitrate, maxHeight, frameRate: normalizedFrameRate, hasAudio: Boolean(hasAudio) };
+}
+
+export function tightenVideoPlan(plan, targetBytes, actualBytes) {
+    if (!(actualBytes > targetBytes)) return plan;
+    const videoBitrate = Math.max(
+        MIN_VIDEO_BITRATE,
+        Math.floor(plan.videoBitrate * (targetBytes / actualBytes) * 0.94)
+    );
+    return videoBitrate < plan.videoBitrate ? { ...plan, videoBitrate } : null;
 }
 
 function uniqueName(prefix, extension = '') {
@@ -43,27 +146,37 @@ async function probe(ffmpeg, inputName) {
     let logs = '';
     const logger = ({ message }) => { logs += `${message}\n`; };
     ffmpeg.on('log', logger);
-    await ffmpeg.exec(['-i', inputName]);
-    ffmpeg.off('log', logger);
+    try {
+        await ffmpeg.exec(['-i', inputName]);
+    } finally {
+        ffmpeg.off('log', logger);
+    }
     const duration = parseDuration(logs);
-    const videoMatch = /(\d{2,5})x(\d{2,5})[^\n]*(\d+(?:\.\d+)?) fps/.exec(logs);
+    const video = parseVideoProbe(logs);
     if (!duration) throw new Error('Could not read the video duration.');
     return {
         duration,
-        width: videoMatch ? Number(videoMatch[1]) : 1920,
-        height: videoMatch ? Number(videoMatch[2]) : 1080,
-        frameRate: videoMatch ? Number(videoMatch[3]) : 30
+        ...video
     };
 }
 
 export function buildVideoEncodeArgs(inputName, outputName, plan) {
-    const videoFilter = `fps=${plan.frameRate},scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
-    return ['-i', inputName, '-map_metadata', '-1', '-map_chapters', '-1', '-vf', videoFilter,
+    const frameRate = Math.min(MAX_OUTPUT_FRAME_RATE, normalizeFrameRate(plan.frameRate));
+    const videoFilter = `fps=${frameRate},scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
+    const hasAudio = plan.hasAudio !== false;
+    const args = ['-i', inputName, '-map', '0:v:0'];
+    if (hasAudio) args.push('-map', '0:a:0');
+    else args.push('-an');
+    args.push('-map_metadata', '-1', '-map_chapters', '-1', '-vf', videoFilter,
         '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
         '-b:v', String(plan.videoBitrate), '-maxrate', String(Math.round(plan.videoBitrate * 1.25)),
-        '-bufsize', String(plan.videoBitrate * 2),
-        '-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', '-ar', '48000',
-        '-af', 'aresample=async=1:first_pts=0', outputName];
+        '-bufsize', String(plan.videoBitrate * 2));
+    if (hasAudio) {
+        args.push('-c:a', 'aac', '-b:a', String(plan.audioBitrate), '-ac', '2', '-ar', '48000',
+            '-af', 'aresample=async=1:first_pts=0');
+    }
+    args.push(outputName);
+    return args;
 }
 
 async function encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus) {
@@ -71,8 +184,12 @@ async function encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus) {
     let recentLogs = [];
     const logger = ({ message }) => { recentLogs = [...recentLogs.slice(-49), message]; };
     ffmpeg.on('log', logger);
-    const exitCode = await ffmpeg.exec(buildVideoEncodeArgs(inputName, outputName, plan));
-    ffmpeg.off('log', logger);
+    let exitCode;
+    try {
+        exitCode = await ffmpeg.exec(buildVideoEncodeArgs(inputName, outputName, plan));
+    } finally {
+        ffmpeg.off('log', logger);
+    }
     if (exitCode !== 0) {
         throw new Error(`FFmpeg encode failed with code ${exitCode}: ${recentLogs.join(' ')}`);
     }
@@ -114,17 +231,27 @@ async function compressVideoAccelerated(file, targetBytes, { onProgress, onStatu
 
     for (let attempt = 0; attempt < 3; attempt++) {
         const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(file) });
+        let conversion;
         try {
             onStatus?.(attempt === 0 ? 'Analyzing video...' : 'Tightening the bitrate to meet the target size...');
             const videoTrack = await input.getPrimaryVideoTrack();
+            const audioTrack = await input.getPrimaryAudioTrack();
             const duration = await input.getDurationFromMetadata();
             if (!videoTrack || !(duration > 0)) throw new Error('Could not read the video metadata.');
 
-            const [width, height] = await Promise.all([
+            const [width, height, frameRateMetrics] = await Promise.all([
                 videoTrack.getDisplayWidth(),
-                videoTrack.getDisplayHeight()
+                videoTrack.getDisplayHeight(),
+                videoTrack.computeFrameRateMetrics()
             ]);
-            const basePlan = buildVideoPlan({ duration, targetBytes, width, height, frameRate: 30 });
+            const basePlan = buildVideoPlan({
+                duration,
+                targetBytes,
+                width,
+                height,
+                frameRate: selectVideoFrameRate(frameRateMetrics),
+                hasAudio: Boolean(audioTrack)
+            });
             const plan = {
                 ...basePlan,
                 videoBitrate: Math.max(MIN_VIDEO_BITRATE, Math.floor(basePlan.videoBitrate * videoBitrateScale))
@@ -134,7 +261,7 @@ async function compressVideoAccelerated(file, targetBytes, { onProgress, onStatu
                 format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
                 target
             });
-            const conversion = await Conversion.init({
+            conversion = await Conversion.init({
                 input,
                 output,
                 tracks: 'primary',
@@ -147,38 +274,53 @@ async function compressVideoAccelerated(file, targetBytes, { onProgress, onStatu
                     keyFrameInterval: 4,
                     forceTranscode: true
                 },
-                audio: {
+                audio: audioTrack ? {
                     codec: 'aac',
                     numberOfChannels: 2,
                     sampleRate: 48_000,
                     quality: new Quality({ bitrate: plan.audioBitrate, bitrateMode: 'variable' }),
                     forceTranscode: true
-                },
+                } : undefined,
                 tags: {}
             });
-            if (!conversion.isValid) {
+            const requiredTracks = [videoTrack, ...(audioTrack ? [audioTrack] : [])];
+            const missingTracks = requiredTracks.filter(track => !conversion.utilizedTracks.includes(track));
+            if (!conversion.isValid || missingTracks.length > 0) {
                 const reasons = conversion.discardedTracks.map(track => track.reason).join(', ');
-                throw new Error(`This browser cannot hardware-encode this file${reasons ? ` (${reasons})` : ''}.`);
+                throw new AcceleratedEncoderError(
+                    `This browser cannot hardware-encode the primary ${missingTracks.map(track => track.type).join(' and ')
+                    || 'media'} track${reasons ? ` (${reasons})` : ''}.`
+                );
             }
 
-            onStatus?.('Encoding MP4 with hardware acceleration...');
+            onStatus?.(ACCELERATED_STATUS);
             conversion.onProgress = progress => onProgress?.(Math.max(0, Math.min(99, Math.round(progress * 100))));
             await conversion.execute();
             if (!target.buffer) throw new Error('The accelerated encoder produced no output.');
 
-            const blob = new Blob([target.buffer], { type: 'video/mp4' });
-            if (!isCompleteMp4(target.buffer)) throw new Error('The accelerated encoder produced an incomplete MP4.');
+            const bytes = new Uint8Array(target.buffer);
+            if (!isCompleteMp4(bytes)) throw new Error('The accelerated encoder produced an incomplete MP4.');
+            const blob = new Blob([bytes], { type: 'video/mp4' });
             if (blob.size <= targetBytes) {
                 onProgress?.(100);
                 return blob;
             }
-            videoBitrateScale *= (targetBytes / blob.size) * 0.94;
+            const nextPlan = tightenVideoPlan(plan, targetBytes, blob.size);
+            if (!nextPlan) throw new VideoTargetSizeError();
+            videoBitrateScale = nextPlan.videoBitrate / basePlan.videoBitrate;
         } finally {
-            input.dispose();
+            if (conversion && conversion.state !== 'done' && conversion.state !== 'canceled') {
+                await conversion.cancel().catch(() => {});
+            }
+            try {
+                input.dispose();
+            } catch {
+                // Cleanup must not replace the encoding or target-size error.
+            }
         }
     }
 
-    throw new Error('The requested size is too small for this video duration. Try a larger target.');
+    throw new VideoTargetSizeError();
 }
 
 export async function compressVideo(file, targetBytes, { onProgress, onStatus } = {}) {
@@ -186,9 +328,15 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
         try {
             return await compressVideoAccelerated(file, targetBytes, { onProgress, onStatus });
         } catch (error) {
+            if (
+                error instanceof VideoTargetSizeError
+                || error instanceof VideoTargetLimitError
+                || error?.code === 'VIDEO_TARGET_SIZE_EXHAUSTED'
+                || error?.code === 'VIDEO_TARGET_BELOW_APP_MINIMUM'
+            ) throw error;
             console.warn('Hardware-accelerated encoding unavailable; using FFmpeg fallback.', error);
             onProgress?.(0);
-            onStatus?.('Using the compatibility video engine...');
+            onStatus?.('Hardware acceleration unavailable; using the compatibility video engine...');
         }
     }
 
@@ -209,20 +357,19 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
                 await encodeAttempt(ffmpeg, inputName, outputName, plan, onStatus);
                 const data = await ffmpeg.readFile(outputName);
                 if (!isCompleteMp4(data)) throw new Error('FFmpeg produced an incomplete MP4 container.');
-                const blob = new Blob([data.buffer], { type: 'video/mp4' });
+                const blob = new Blob([data], { type: 'video/mp4' });
                 if (blob.size <= targetBytes) {
                     onProgress?.(100);
                     return blob;
                 }
-                plan = {
-                    ...plan,
-                    videoBitrate: Math.max(MIN_VIDEO_BITRATE, Math.floor(plan.videoBitrate * (targetBytes / blob.size) * 0.94))
-                };
+                const nextPlan = tightenVideoPlan(plan, targetBytes, blob.size);
+                if (!nextPlan) throw new VideoTargetSizeError();
+                plan = nextPlan;
                 onStatus?.('Tightening the bitrate to meet the target size...');
                 await ffmpeg.deleteFile(outputName).catch(() => {});
             }
 
-            throw new Error('The requested size is too small for this video duration. Try a larger target.');
+            throw new VideoTargetSizeError();
         } finally {
             for (const name of cleanup) await ffmpeg.deleteFile(name).catch(() => {});
         }
