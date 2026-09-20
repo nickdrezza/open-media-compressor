@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
-        content="Ultra-minimalist, private, browser-based compressor for photos and videos. Nothing leaves your device.">
+        content="Private, browser-based compression for photos and videos. Compression runs locally on your device.">
     <meta name="keywords"
         content="media compressor, video compressor, image compressor, gif compressor, private compression, ffmpeg.wasm, brutalist ui">
     <meta name="author" content="guidrezza">
@@ -15,317 +15,80 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-title" content="Compressor" />
     <link rel="manifest" href="/favicon/site.webmanifest" />
+    <link rel="stylesheet" href="/src/styles.css">
     <title>Open Media Compressor | Private Browser-Based Compression</title>
-
-
-
-    <style>
-        :root {
-            --bg-color: #121212;
-            --text-color: #ffffff;
-            --accent-color: #ffffff;
-            --border-color: #333333;
-            --font-main: 'Inter', system-ui, -apple-system, sans-serif;
-            --control-height: 44px;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: var(--font-main);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            padding: 20px;
-            max-width: 500px;
-            margin: 0 auto;
-            gap: 20px;
-        }
-
-        header {
-            text-align: center;
-            margin-bottom: 10px;
-        }
-
-        header h1 {
-            font-size: 1.5rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: -0.05rem;
-            display: inline-block;
-            border-bottom: 2px solid var(--text-color);
-            padding-bottom: 5px;
-        }
-
-        /* Drop Zone & File List Area */
-        #main-content {
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        #drop-zone {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            border: 2px dashed var(--border-color);
-            padding: 40px 20px;
-            cursor: pointer;
-            transition: border-color 0.3s ease, background-color 0.3s ease;
-        }
-
-        #drop-zone.dragover {
-            border-color: var(--accent-color);
-            background-color: rgba(255, 255, 255, 0.05);
-        }
-
-        #upload-icon {
-            width: 40px;
-            height: 40px;
-            fill: currentColor;
-            margin-bottom: 15px;
-        }
-
-        #upload-text {
-            font-size: 1rem;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        #file-list-container {
-            width: 100%;
-        }
-
-        .file-item {
-            font-size: 0.9rem;
-            margin-bottom: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 8px;
-            font-family: monospace;
-        }
-
-        .file-name {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 65%;
-        }
-
-        .file-size {
-            color: #888;
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .progress-bar {
-            width: 50px;
-            height: 4px;
-            background: #333;
-            border-radius: 2px;
-            overflow: hidden;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: #fff;
-            transition: width 0.2s;
-        }
-
-        .status-text {
-            font-size: 0.75rem;
-            color: #aaa;
-        }
-
-        .upload-more-item {
-            cursor: pointer;
-            color: #ccc;
-            border-bottom-style: dashed;
-            transition: color 0.2s ease;
-        }
-
-        .upload-more-item:hover {
-            color: white;
-        }
-
-        /* Controls */
-        #controls-area {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-top: 10px;
-        }
-
-        .control-row {
-            width: 100%;
-        }
-
-        .size-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            width: 100%;
-        }
-
-        .size-control label {
-            font-weight: 700;
-            font-size: 0.85rem;
-            flex-shrink: 0;
-        }
-
-        .size-control input {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: white;
-            padding: 0 10px;
-            flex-grow: 1;
-            height: var(--control-height);
-            font-family: inherit;
-            font-size: 0.9rem;
-        }
-
-        .toggle-group {
-            display: flex;
-            border: 1px solid var(--border-color);
-            height: var(--control-height);
-        }
-
-        .toggle-btn {
-            background: transparent;
-            border: none;
-            color: #666;
-            padding: 0 12px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            font-weight: bold;
-            height: 100%;
-        }
-
-        .toggle-btn.active {
-            color: white;
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        #compress-btn {
-            background: white;
-            color: black;
-            border: none;
-            width: 100%;
-            height: 50px;
-            font-size: 1.2rem;
-            font-weight: 900;
-            text-transform: uppercase;
-            cursor: pointer;
-            transition: transform 0.1s ease;
-        }
-
-        #compress-btn:active {
-            transform: scale(0.98);
-        }
-
-        #compress-btn:disabled {
-            background: #444;
-            cursor: not-allowed;
-        }
-
-        /* Footer */
-        footer {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            font-size: 0.75rem;
-            color: #666;
-            margin-top: 15px;
-            text-align: center;
-        }
-
-        .footer-line {
-            line-height: 1.3;
-        }
-
-        .footer-line a {
-            color: white;
-            text-decoration: underline;
-        }
-
-        /* Utilities */
-        .hidden {
-            display: none !important;
-        }
-    </style>
 </head>
 
-<body x-data="compressor()" @dragover.window.prevent="isDragging = true" @dragleave.window.prevent="isDragging = false"
-    @drop.window.prevent="handleDrop($event)">
+<body x-data="compressor()" @dragover.window.prevent="isDragging = true"
+    @dragleave.window.prevent="isDragging = false" @drop.window.prevent="handleDrop($event)">
 
     <header>
         <h1>Open Media Compressor</h1>
     </header>
 
-    <main id="main-content">
-        <div id="drop-zone" :class="{ 'dragover': isDragging, 'hidden': files.length > 0 }"
-            @click="$refs.fileInput.click()">
-            <svg id="upload-icon" viewBox="0 0 24 24">
+    <main id="main-content" :aria-busy="isCompressing">
+        <div id="drop-zone" :class="{ 'dragover': isDragging, 'hidden': files.length > 0 }" role="region" aria-label="Upload files"
+            @dragover.prevent="isDragging = true" @dragleave.prevent="isDragging = false"
+            @drop.prevent.stop="handleDrop($event)">
+            <svg id="upload-icon" viewBox="0 0 24 24" aria-hidden="true">
                 <path
                     d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" />
             </svg>
             <div id="upload-text">DROP IN FILES OR UPLOAD</div>
-            <input type="file" x-ref="fileInput" multiple class="hidden" aria-label="Upload media"
-                @change="handleFiles($event)">
+            <button id="upload-btn" type="button" @click="$refs.fileInput.click()">Choose files</button>
         </div>
+        <input id="file-input" type="file" x-ref="fileInput" multiple class="visually-hidden"
+            aria-label="Upload media" @change="handleFiles($event)">
 
         <div id="file-list-container" x-show="files.length > 0" style="display: none;">
             <div id="file-list">
                 <template x-for="(file, index) in files" :key="index">
                     <div class="file-item" :class="file.status">
                         <div class="file-info">
-                            <span class="file-name" x-text="truncate(file.raw.name, 25)"></span>
+                            <span class="file-name" :title="file.raw.name" x-text="file.raw.name"></span>
                             <span class="file-size" x-text="formatSize(file.raw.size)"></span>
                         </div>
                         <div class="file-status-row">
                             <span class="file-status-label" x-show="file.status"
                                 x-text="file.status?.toUpperCase()"></span>
-                            <span class="file-status-msg" x-show="file.statusMessage"
+                            <span class="file-status-msg" role="status" aria-live="polite" x-show="file.statusMessage"
                                 x-text="file.statusMessage"></span>
-                            <span class="file-progress" x-show="file.status === 'processing'"
-                                x-text="file.progress + '%'"></span>
+                            <progress class="file-progress" max="100" x-show="file.status === 'processing'"
+                                :value="file.progress" :aria-label="`Compressing ${file.raw.name}`"></progress>
                         </div>
                     </div>
                 </template>
 
-                <div class="file-item upload-more-item" @click="$refs.fileInput.click()">
+                <button class="file-item upload-more-item" type="button" @click="$refs.fileInput.click()">
                     <span class="file-name">Upload more 🔼</span>
                     <span class="file-size"></span>
-                </div>
+                </button>
             </div>
         </div>
+
+        <p id="phase-status" role="status" aria-live="polite" x-text="phaseMessage"></p>
     </main>
 
     <div id="controls-area">
         <div class="control-row">
             <div class="size-control">
-                <label>Max Size:</label>
-                <input type="number" x-model="maxSize">
-                <div class="toggle-group">
-                    <button class="toggle-btn" :class="{ 'active': unit === 'KB' }" @click="unit = 'KB'">KB</button>
-                    <button class="toggle-btn" :class="{ 'active': unit === 'MB' }" @click="unit = 'MB'">MB</button>
+                <label for="max-size">Max Size:</label>
+                <input id="max-size" type="number" min="0" step="any" x-model="maxSize"
+                    :disabled="isCompressing" :aria-invalid="validationError ? 'true' : 'false'"
+                    aria-describedby="target-validation-error">
+                <div class="toggle-group" aria-label="Target size unit">
+                    <button class="toggle-btn" type="button" :class="{ 'active': unit === 'KB' }"
+                        :aria-pressed="unit === 'KB'" :disabled="isCompressing" @click="unit = 'KB'">KB</button>
+                    <button class="toggle-btn" type="button" :class="{ 'active': unit === 'MB' }"
+                        :aria-pressed="unit === 'MB'" :disabled="isCompressing" @click="unit = 'MB'">MB</button>
                 </div>
             </div>
+            <p id="target-validation-error" class="validation-error" role="alert" x-show="validationError"
+                x-text="validationError"></p>
         </div>
         <div class="control-row">
-            <button id="compress-btn" @click="startCompression" :disabled="isCompressing || files.length === 0"
+            <button id="compress-btn" type="button" @click="startCompression"
+                :disabled="isCompressing || files.length === 0"
                 x-text="isCompressing ? 'WORKING...' : 'COMPRESS'">
                 COMPRESS
             </button>
@@ -334,216 +97,14 @@
 
     <footer>
         <div class="footer-line">
-            Open-source, 100% free, no limits, no data ever leaves your device.
+            Open-source and free to use. Compression runs in your browser on your device; this app does not upload your files.
         </div>
         <div class="footer-line">
-            Made by <a href="https://nickdrezza.com" target="_blank">nickdrezza</a>
+            Made by <a href="https://nickdrezza.com" target="_blank" rel="noreferrer">nickdrezza</a>
         </div>
     </footer>
 
-    <script type="module">
-        import Alpine from 'alpinejs';
-        import {
-            detectFileKind,
-            getUnsupportedFileMessage
-        } from './src/file_types.js';
-        import { compressImage } from './src/image_compressor.js';
-        import { compressVideo } from './src/video_compressor.js';
-
-        window.Alpine = Alpine;
-
-        Alpine.data('compressor', () => ({
-            files: [],
-            isDragging: false,
-            isCompressing: false,
-            maxSize: 500,
-            unit: 'KB',
-            capabilities: {
-                worker: false
-            },
-
-            init() {
-                this.probeCapabilities();
-            },
-
-            probeCapabilities() {
-                this.capabilities.worker = typeof Worker !== 'undefined';
-            },
-
-            getMissingApis(requirements) {
-                return requirements.filter((api) => !this.capabilities[api]);
-            },
-
-            getSupportErrorForPath(path) {
-                const pathRequirements = {
-                    video: ['worker'],
-                    image: []
-                };
-
-                const missing = this.getMissingApis(pathRequirements[path] || []);
-                if (!missing.length) return null;
-
-                const messages = {
-                    worker: 'Web Workers'
-                };
-
-                const firstMissing = missing[0];
-                return `Your browser does not support ${messages[firstMissing]}. Try a current browser.`;
-            },
-
-            assertBrowserSupport(path) {
-                const errorMessage = this.getSupportErrorForPath(path);
-                if (errorMessage) throw new Error(errorMessage);
-            },
-
-            handleDrop(e) {
-                this.isDragging = false;
-                this.addFiles(e.dataTransfer.files);
-            },
-
-            handleFiles(e) {
-                this.addFiles(e.target.files);
-                e.target.value = '';
-            },
-
-            addFiles(fileList) {
-                if (this.files.length === 0 && fileList.length > 0) {
-                    const firstPath = this.detectFileKind(fileList[0]);
-                    if (firstPath === 'video') {
-                        this.maxSize = 20;
-                        this.unit = 'MB';
-                    } else if (firstPath === 'image') {
-                        this.maxSize = 500;
-                        this.unit = 'KB';
-                    }
-                }
-
-                for (let i = 0; i < fileList.length; i++) {
-                    const path = this.detectFileKind(fileList[i]);
-                    this.files.push({
-                        raw: fileList[i],
-                        status: null, // null, 'processing', 'done', 'error'
-                        progress: 0,
-                        statusMessage: this.getSupportErrorForPath(path)
-                    });
-                }
-            },
-
-            truncate(str, n) {
-                return (str.length > n) ? str.slice(0, n - 1) + '...' : str;
-            },
-
-            formatSize(bytes) {
-                return (bytes / 1024 / 1024).toFixed(2) + ' MB';
-            },
-
-            getTargetBytes() {
-                const numericMaxSize = Number(this.maxSize);
-
-                if (!Number.isFinite(numericMaxSize) || numericMaxSize <= 0) {
-                    throw new Error('Max size must be a positive number.');
-                }
-
-                return this.unit === 'MB'
-                    ? numericMaxSize * 1024 * 1024
-                    : numericMaxSize * 1024;
-            },
-
-            detectFileKind(file) {
-                return detectFileKind(file);
-            },
-
-            assertFileSupport(path, file) {
-                if (path !== 'unsupported') return;
-
-                throw new Error(getUnsupportedFileMessage(file));
-            },
-
-            finalizeFile(fileObj, blob, newExt) {
-                this.downloadFile(blob, this.getOutName(fileObj.raw.name, newExt));
-                fileObj.status = 'done';
-                fileObj.progress = 100;
-                fileObj.statusMessage = `${this.formatSize(fileObj.raw.size)} -> ${this.formatSize(blob.size)}`;
-            },
-
-            async startCompression() {
-                this.isCompressing = true;
-
-                try {
-                    const targetBytes = this.getTargetBytes();
-
-                    for (let fileObj of this.files) {
-                        if (fileObj.status === 'done') continue; // Skip already done
-
-                        // If the file is already under the limit, keep the original size as the cap
-                        // so we still sanitize metadata without accidentally growing it.
-                        const effectiveTargetBytes = Math.min(fileObj.raw.size, targetBytes);
-
-                        fileObj.status = 'processing';
-                        fileObj.progress = 0;
-                        fileObj.statusMessage = '';
-
-                        try {
-                            const path = this.detectFileKind(fileObj.raw);
-                            this.assertFileSupport(path, fileObj.raw);
-                            this.assertBrowserSupport(path);
-
-                            if (path === 'video') {
-                                const blob = await this.compressVideoWorker(fileObj, effectiveTargetBytes);
-                                this.finalizeFile(fileObj, blob, '.mp4');
-                            } else if (path === 'image') {
-                                const blob = await compressImage(fileObj.raw, effectiveTargetBytes);
-                                this.finalizeFile(fileObj, blob, '.jpg');
-                            }
-                        } catch (e) {
-                            console.error(e);
-                            fileObj.status = 'error';
-                            fileObj.statusMessage = e.message;
-                        }
-                    }
-                } finally {
-                    this.isCompressing = false;
-                }
-            },
-
-            compressVideoWorker(fileObj, targetBytes) {
-                return new Promise((resolve, reject) => {
-                    try {
-                        this.assertBrowserSupport('video');
-                    } catch (e) {
-                        reject(e);
-                        return;
-                    }
-
-                    compressVideo(fileObj.raw, targetBytes, {
-                        onProgress: (value) => { fileObj.progress = value; },
-                        onStatus: (message) => { fileObj.statusMessage = message; }
-                    }).then(resolve, reject);
-                });
-            },
-
-            downloadFile(blob, filename) {
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(url), 100);
-            },
-
-            getOutName(originalName, newExt) {
-                const extensionIndex = originalName.lastIndexOf('.');
-                const hasExtension = extensionIndex > 0;
-                const namePart = hasExtension ? originalName.slice(0, extensionIndex) : originalName;
-                const ext = newExt || (hasExtension ? originalName.slice(extensionIndex) : '');
-                return `${namePart}_c${ext}`;
-            }
-        }));
-
-        Alpine.start();
-    </script>
+    <script type="module" src="/src/app.js"></script>
 </body>
 
 </html>
