@@ -116,11 +116,18 @@ export function createCompressorApp({
             throw new Error(getUnsupportedFileMessage(file));
         },
 
-        finalizeFile(fileObj, blob, newExt) {
+        finalizeFile(fileObj, blob, newExt, effectiveTargetBytes) {
+            const outputBytes = Number(blob?.size);
+            if (!Number.isFinite(outputBytes) || outputBytes < 1) {
+                throw new Error('Compression produced an empty or invalid output.');
+            }
+            if (outputBytes > effectiveTargetBytes) {
+                throw new Error('Compressed output exceeds the requested target size.');
+            }
             this.downloadFile(blob, this.getOutName(fileObj.raw.name, newExt));
             fileObj.status = 'done';
             fileObj.progress = 100;
-            fileObj.statusMessage = `${this.formatSize(fileObj.raw.size)} -> ${this.formatSize(blob.size)}`;
+            fileObj.statusMessage = `${this.formatSize(fileObj.raw.size)} -> ${this.formatSize(outputBytes)}`;
         },
 
         async startCompression() {
@@ -136,13 +143,17 @@ export function createCompressorApp({
                 for (const fileObj of this.files) {
                     if (fileObj.status === 'done') continue;
 
-                    const effectiveTargetBytes = Math.min(fileObj.raw.size, targetBytes);
                     fileObj.status = 'processing';
                     fileObj.progress = 0;
                     fileObj.statusMessage = 'Preparing...';
                     this.phaseMessage = `Preparing ${fileObj.raw.name}...`;
 
                     try {
+                        const sourceBytes = Number(fileObj.raw?.size);
+                        if (!Number.isFinite(sourceBytes) || sourceBytes < 1) {
+                            throw new Error('Source file must have a positive finite byte count.');
+                        }
+                        const effectiveTargetBytes = Math.min(sourceBytes, targetBytes);
                         const path = this.detectFileKind(fileObj.raw);
                         this.assertFileSupport(path, fileObj.raw);
 
@@ -154,12 +165,12 @@ export function createCompressorApp({
                                     this.phaseMessage = message;
                                 }
                             });
-                            this.finalizeFile(fileObj, blob, '.mp4');
+                            this.finalizeFile(fileObj, blob, '.mp4', effectiveTargetBytes);
                         } else if (path === 'image') {
                             fileObj.statusMessage = 'Compressing image...';
                             this.phaseMessage = `Compressing ${fileObj.raw.name}...`;
                             const blob = await compressImage(fileObj.raw, effectiveTargetBytes);
-                            this.finalizeFile(fileObj, blob, '.jpg');
+                            this.finalizeFile(fileObj, blob, '.jpg', effectiveTargetBytes);
                         }
                     } catch (error) {
                         logger.error('Compression failed.', error);
