@@ -12,7 +12,10 @@ import {
 } from 'mediabunny';
 
 const MIN_VIDEO_BITRATE = 60_000;
+const MIN_AUDIO_BITRATE = 64_000;
+const MAX_OUTPUT_FRAME_RATE = 30;
 const DEFAULT_FRAME_RATE = 30;
+export const ACCELERATED_STATUS = 'Using browser video codecs...';
 const SUPPORTED_FRAME_RATES = [
     { value: 23.976, aliases: [24000 / 1001] },
     { value: 24 },
@@ -28,6 +31,14 @@ export class VideoTargetSizeError extends Error {
         super(message);
         this.name = 'VideoTargetSizeError';
         this.code = 'VIDEO_TARGET_SIZE_EXHAUSTED';
+    }
+}
+
+export class VideoTargetLimitError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'VideoTargetLimitError';
+        this.code = 'VIDEO_TARGET_BELOW_APP_MINIMUM';
     }
 }
 
@@ -93,12 +104,22 @@ export function buildVideoPlan({
     hasAudio = true
 }) {
     if (!(duration > 0) || !(targetBytes > 0)) throw new Error('Invalid video duration or target size.');
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+        throw new Error('Invalid video dimensions: width and height must be finite positive numbers.');
+    }
     const totalBitrate = Math.floor((targetBytes * 8 * 0.965) / duration);
     const audioBitrate = hasAudio
-        ? totalBitrate >= 900_000 ? 128_000 : totalBitrate >= 450_000 ? 96_000 : 64_000
+        ? totalBitrate >= 900_000 ? 128_000 : totalBitrate >= 450_000 ? 96_000 : MIN_AUDIO_BITRATE
         : 0;
+    const minimumBitrate = MIN_VIDEO_BITRATE + (hasAudio ? MIN_AUDIO_BITRATE : 0);
+    if (totalBitrate < minimumBitrate) {
+        throw new VideoTargetLimitError(
+            `Target size is below the app minimum bitrate policy of ${minimumBitrate} bits per second `
+            + `for ${hasAudio ? 'video with audio' : 'silent video'}.`
+        );
+    }
     const videoBitrate = Math.max(MIN_VIDEO_BITRATE, totalBitrate - audioBitrate);
-    const normalizedFrameRate = normalizeFrameRate(frameRate);
+    const normalizedFrameRate = Math.min(MAX_OUTPUT_FRAME_RATE, normalizeFrameRate(frameRate));
     const bpp = videoBitrate / Math.max(1, width * height * normalizedFrameRate);
     let maxHeight = height;
     if (bpp < 0.025 || videoBitrate < 450_000) maxHeight = Math.min(maxHeight, 360);
@@ -140,7 +161,8 @@ async function probe(ffmpeg, inputName) {
 }
 
 export function buildVideoEncodeArgs(inputName, outputName, plan) {
-    const videoFilter = `fps=${plan.frameRate},scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
+    const frameRate = Math.min(MAX_OUTPUT_FRAME_RATE, normalizeFrameRate(plan.frameRate));
+    const videoFilter = `fps=${frameRate},scale=-2:min(${plan.maxHeight}\\,ih):flags=lanczos`;
     const hasAudio = plan.hasAudio !== false;
     const args = ['-i', inputName, '-map', '0:v:0'];
     if (hasAudio) args.push('-map', '0:a:0');
@@ -271,7 +293,7 @@ async function compressVideoAccelerated(file, targetBytes, { onProgress, onStatu
                 );
             }
 
-            onStatus?.('Encoding MP4 with hardware acceleration...');
+            onStatus?.(ACCELERATED_STATUS);
             conversion.onProgress = progress => onProgress?.(Math.max(0, Math.min(99, Math.round(progress * 100))));
             await conversion.execute();
             if (!target.buffer) throw new Error('The accelerated encoder produced no output.');
@@ -287,7 +309,9 @@ async function compressVideoAccelerated(file, targetBytes, { onProgress, onStatu
             if (!nextPlan) throw new VideoTargetSizeError();
             videoBitrateScale = nextPlan.videoBitrate / basePlan.videoBitrate;
         } finally {
-            if (conversion && conversion.state !== 'done') await conversion.cancel().catch(() => {});
+            if (conversion && conversion.state !== 'done' && conversion.state !== 'canceled') {
+                await conversion.cancel().catch(() => {});
+            }
             try {
                 input.dispose();
             } catch {
@@ -304,7 +328,12 @@ export async function compressVideo(file, targetBytes, { onProgress, onStatus } 
         try {
             return await compressVideoAccelerated(file, targetBytes, { onProgress, onStatus });
         } catch (error) {
-            if (error instanceof VideoTargetSizeError || error?.code === 'VIDEO_TARGET_SIZE_EXHAUSTED') throw error;
+            if (
+                error instanceof VideoTargetSizeError
+                || error instanceof VideoTargetLimitError
+                || error?.code === 'VIDEO_TARGET_SIZE_EXHAUSTED'
+                || error?.code === 'VIDEO_TARGET_BELOW_APP_MINIMUM'
+            ) throw error;
             console.warn('Hardware-accelerated encoding unavailable; using FFmpeg fallback.', error);
             onProgress?.(0);
             onStatus?.('Hardware acceleration unavailable; using the compatibility video engine...');
