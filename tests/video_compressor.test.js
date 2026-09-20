@@ -88,6 +88,7 @@ test('parseVideoProbe reads the primary video stream and common frame rates', ()
         ['29.97', 29.97],
         ['30000/1001', 29.97],
         ['30', 30],
+        ['15', 15],
         ['59.94', 59.94],
         ['60000/1001', 59.94],
         ['60', 60]

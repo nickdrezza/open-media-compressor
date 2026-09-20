@@ -56,7 +56,7 @@ function normalizeFrameRate(value) {
         .map(rate => ({ rate, difference: Math.min(...[rate.value, ...(rate.aliases ?? [])].map(candidate => Math.abs(value - candidate))) }))
         .filter(candidate => candidate.difference <= 0.04)
         .sort((left, right) => left.difference - right.difference)[0];
-    return match?.rate.value ?? DEFAULT_FRAME_RATE;
+    return match?.rate.value ?? Math.min(MAX_OUTPUT_FRAME_RATE, value);
 }
 
 function parseFrameRate(value) {
