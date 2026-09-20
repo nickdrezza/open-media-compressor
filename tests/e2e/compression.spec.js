@@ -23,6 +23,35 @@ import {
     uploadFixture,
 } from './support/app.js';
 
+function makeSvgFixture() {
+    const shapes = Array.from({ length: 400 }, (_, index) => {
+        const x = (index * 37) % 1200;
+        const y = (index * 61) % 800;
+        const color = `hsl(${index % 360} 80% 50%)`;
+        return `<circle cx="${x}" cy="${y}" r="24" fill="${color}"/>`;
+    }).join('');
+    return Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="100%" height="100%" fill="#111"/>${shapes}</svg>`
+    );
+}
+
+test('uploads, compresses, and downloads a deterministic SVG within the effective cap', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('#file-input').setInputFiles({
+        name: 'browser-fixture.svg',
+        mimeType: 'image/svg+xml',
+        buffer: makeSvgFixture(),
+    });
+    await selectTarget(page, 20);
+
+    const { download, bytes } = await compressAndRead(page);
+    expect(download.suggestedFilename()).toBe('browser-fixture_c.jpg');
+    expect(bytes.byteLength).toBeGreaterThan(0);
+    expect(bytes.byteLength).toBeLessThanOrEqual(20 * 1024);
+    expect([...bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+    await expect(page.getByText('DONE')).toBeVisible();
+});
+
 test('uploads, compresses, and downloads a deterministic image within the effective cap', async ({ page }) => {
     const requests = recordNetwork(page);
     await page.goto('/');
