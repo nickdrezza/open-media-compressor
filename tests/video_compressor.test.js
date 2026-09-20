@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import {
     buildVideoEncodeArgs,
     buildVideoPlan,
+    ACCELERATED_STATUS,
     isCompleteMp4,
     parseDuration,
     parseVideoProbe,
     selectVideoFrameRate,
-    tightenVideoPlan
+    tightenVideoPlan,
+    VideoTargetLimitError
 } from '../src/video_compressor.js';
 
 test('parseDuration reads FFmpeg probe output', () => {
@@ -39,6 +41,42 @@ test('buildVideoPlan reserves audio and lowers resolution for a tight budget', (
     assert.ok(plan.videoBitrate > 0);
     assert.ok(plan.audioBitrate > 0);
     assert.ok(plan.maxHeight <= 480);
+});
+
+test('buildVideoPlan keeps the 30 fps output ceiling while preserving lower rates', () => {
+    assert.equal(buildVideoPlan({ duration: 30, targetBytes: 10 * 1024 * 1024, frameRate: 59.94 }).frameRate, 30);
+    assert.equal(buildVideoPlan({ duration: 30, targetBytes: 10 * 1024 * 1024, frameRate: 29.97 }).frameRate, 29.97);
+    const args = buildVideoEncodeArgs('input.mp4', 'output.mp4', {
+        frameRate: 60,
+        maxHeight: 720,
+        videoBitrate: 800_000,
+        audioBitrate: 96_000
+    });
+    assert.equal(args[args.indexOf('-vf') + 1].startsWith('fps=30,'), true);
+});
+
+test('buildVideoPlan rejects invalid dimensions before planning', () => {
+    for (const dimensions of [[0, 1080], [1920, -1], [NaN, 1080], [1920, Infinity]]) {
+        assert.throws(
+            () => buildVideoPlan({ duration: 30, targetBytes: 2 * 1024 * 1024, width: dimensions[0], height: dimensions[1] }),
+            /Invalid video dimensions: width and height must be finite positive numbers/
+        );
+    }
+});
+
+test('buildVideoPlan enforces the minimum bitrate policy based on audio presence', () => {
+    assert.throws(
+        () => buildVideoPlan({ duration: 10, targetBytes: 100_000, hasAudio: true }),
+        error => error instanceof VideoTargetLimitError
+            && error.code === 'VIDEO_TARGET_BELOW_APP_MINIMUM'
+            && /minimum bitrate policy/.test(error.message)
+    );
+    assert.throws(
+        () => buildVideoPlan({ duration: 10, targetBytes: 70_000, hasAudio: false }),
+        error => error instanceof VideoTargetLimitError && /silent video/.test(error.message)
+    );
+    const silentPlan = buildVideoPlan({ duration: 10, targetBytes: 100_000, hasAudio: false });
+    assert.equal(silentPlan.audioBitrate, 0);
 });
 
 test('parseVideoProbe reads the primary video stream and common frame rates', () => {
@@ -91,6 +129,11 @@ test('video planning and FFmpeg mapping omit audio when the primary stream has n
 test('accelerated frame-rate selection uses Mediabunny metrics and preserves supported rates', () => {
     assert.equal(selectVideoFrameRate({ bestGuessFrameRate: 59.94005994 }), 59.94);
     assert.equal(selectVideoFrameRate({ bestGuessFrameRate: 48 }), 30);
+});
+
+test('accelerated status does not claim hardware acceleration', () => {
+    assert.equal(ACCELERATED_STATUS, 'Using browser video codecs...');
+    assert.equal(ACCELERATED_STATUS.includes('hardware acceleration'), false);
 });
 
 test('tightening stops when the bitrate floor cannot shrink further', () => {
