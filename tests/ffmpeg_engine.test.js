@@ -92,3 +92,22 @@ test('progress listeners are cleaned up when an operation rejects', async () => 
     assert.equal(ffmpeg.listenerCount('progress'), 0);
     assert.strictEqual(await engine.getFFmpeg(), ffmpeg);
 });
+
+test('a completed operation cannot leak stale progress into a later operation', async () => {
+    const ffmpeg = createFakeFFmpeg();
+    const engine = createFFmpegEngine({ createFFmpeg: () => ffmpeg });
+    const firstProgress = [];
+    const secondProgress = [];
+
+    await engine.withFFmpeg({ onProgress: value => firstProgress.push(value) }, async () => {
+        ffmpeg.emit('progress', { progress: 0.2 });
+    });
+    await engine.withFFmpeg({ onProgress: value => secondProgress.push(value) }, async () => {
+        ffmpeg.emit('progress', { progress: 0.4 });
+    });
+
+    ffmpeg.emit('progress', { progress: 0.9 });
+    assert.deepEqual(firstProgress, [20]);
+    assert.deepEqual(secondProgress, [40]);
+    assert.equal(ffmpeg.listenerCount('progress'), 0);
+});
