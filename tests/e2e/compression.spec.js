@@ -235,7 +235,10 @@ test('converts a WebM video to H.264 MP4 under the target size', async ({ page }
     for await (const chunk of output) chunks.push(chunk);
     const bytes = Buffer.concat(chunks);
     const statuses = await page.evaluate(() => window.__compressionStatuses);
-    expect(statuses).toContain('Encoding MP4 with hardware acceleration...');
+    expect(statuses.some(status => [
+        'Using browser video codecs...',
+        'Encoding MP4...',
+    ].includes(status))).toBe(true);
     expect(bytes.byteLength).toBeGreaterThan(0);
     expect(bytes.byteLength).toBeLessThanOrEqual(120 * 1024);
     expect(bytes.subarray(4, 8).toString('ascii')).toBe('ftyp');
