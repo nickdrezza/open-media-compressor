@@ -3,12 +3,12 @@ import { test, expect } from '@playwright/test';
 function assetPaths(requests) {
     return requests
         .map(request => new URL(request.url()).pathname)
-        .filter(path => path.startsWith('/assets/'));
+        .filter(path => path.startsWith('/assets/') || path.startsWith('/src/') || path.includes('/node_modules/'));
 }
 
 function ffmpegAssetPaths(paths) {
     return paths.filter(path =>
-        /\/worker-|\/ffmpeg-core-|\/ffmpeg_engine-|\/esm-[^/]+\.js$|\.wasm$/.test(path)
+        /\/worker-|\/worker\.js$|\/ffmpeg-core-|\/ffmpeg_engine(?:-|\/|\.js)|\/src\/ffmpeg_engine|\/esm-[^/]+\.js$|\.wasm$/.test(path)
     );
 }
 
@@ -122,14 +122,14 @@ test('the first TIFF fallback loads FFmpeg and the second reuses its module and 
     const paths = trace.paths();
     expect(paths.filter(path => path.includes('image_compressor'))).toHaveLength(1);
     expect(paths.filter(path => path.includes('ffmpeg_engine'))).toHaveLength(1);
-    expect(paths.filter(path => /\/esm-[^/]+\.js$/.test(path))).toHaveLength(1);
-    expect(paths.filter(path => path.includes('/worker-'))).toHaveLength(1);
-    expect(paths.filter(path => path.includes('/ffmpeg-core-') && path.endsWith('.js'))).toHaveLength(1);
+    expect(paths.some(path => /\/dist\/esm\/|\/esm-[^/]+\.js$/.test(path))).toBe(true);
+    expect(paths.filter(path => /\/worker-|\/worker\.js$/.test(path))).toHaveLength(1);
+    expect(paths.filter(path => /\/ffmpeg-core(?:-|\/|\.js)/.test(path) && path.endsWith('.js'))).toHaveLength(1);
     expect(paths.filter(path => path.endsWith('.wasm'))).toHaveLength(1);
 });
 
 test('video processing requests the video chunk and exposes reload after a cached chunk failure', async ({ page }) => {
-    await page.route('**/assets/video_compressor-*.js', route => route.abort());
+    await page.route('**/*video_compressor*', route => route.abort());
     const trace = await tracePage(page);
     await page.locator('#file-input').setInputFiles({
         name: 'load-boundary.webm',
