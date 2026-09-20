@@ -15,14 +15,42 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.23.1
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browser
+      - name: Install FFmpeg parser used by media assertions
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+
+      - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run tests
-        run: npm run test:ci
+      - name: Install WebKit when the runner provides it
+        id: webkit
+        run: |
+          if npx playwright install --with-deps webkit; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Run focused development-server Chromium suite
+        run: npm run test:e2e:dev
+
+      - name: Run required built-app Chromium suite
+        run: npm run test:e2e:built
+
+      - name: Run WebKit smoke suite
+        if: steps.webkit.outputs.available == 'true'
+        run: npm run test:e2e:webkit
+
+      - name: Report WebKit capability skip
+        if: steps.webkit.outputs.available != 'true'
+        run: echo "WebKit smoke skipped because the Playwright WebKit browser could not be installed on this runner."

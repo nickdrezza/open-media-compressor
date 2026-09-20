@@ -4,51 +4,60 @@ An ultra-minimalist, "Brutalist" single-page web application for private media c
 
 ## Features
 
-- **Privacy First**: All processing happens locally on your device. No data is ever sent to a server.
-- **Videos**: Common video formats are converted to broadly compatible **H.264/AAC MP4** with hardware-accelerated browser codecs when available and an FFmpeg compatibility fallback, then verified against the requested size.
-- **Images**: Common image formats are converted to universally previewable **JPEG**, preserving resolution when possible and resizing only when quality alone cannot meet the target. Transparency is flattened onto white.
-- **Private**: All codecs run locally in the browser. Media never leaves the device.
-- **Brutalist Aesthetic**: Built with a sleek, high-contrast dark mode using **Alpine.js**.
+- **Privacy first**: all processing happens locally on your device. No media is sent to a server.
+- **Video**: supported inputs become H.264/AAC MP4 when the current browser can encode the requested tracks. If that capability is missing or the encode fails, the app reports the compatibility path and retries with FFmpeg WebAssembly. Silent inputs remain silent; primary audio and video tracks are mapped explicitly, metadata and chapters are stripped, and the result is checked against the requested size.
+- **Images**: supported still images become JPEG, preserving resolution when possible and resizing only when quality alone cannot meet the target. Transparency is flattened onto white. Animated input is treated as a still image and produces a JPEG frame, not an animated output.
+- **Private**: all codecs run locally in the browser. Media never leaves the device.
 
 ## Portfolio Notes
 
 - **Problem:** media compression tools often require uploads, subscriptions, or unclear privacy tradeoffs.
-- **Approach:** run compression entirely in the browser with hardware-accelerated WebCodecs for everyday video, FFmpeg WebAssembly for broad fallback support, and the browser's JPEG encoder for common images.
-- **What it shows:** modern browser APIs, performance-minded worker architecture, metadata stripping, target-size heuristics, and pragmatic compatibility handling for Safari/macOS.
+- **Approach:** use WebCodecs where available, FFmpeg WebAssembly for compatibility, and the browser's JPEG encoder for common images.
+- **What it shows:** browser capability detection, real output validation, metadata stripping, target-size heuristics, and a compatibility path for browsers without the required codec support.
 
 ## Technology Stack
 
-- **Core**: Mediabunny/WebCodecs for fast video, `ffmpeg.wasm` for compatibility and fallback image decoding, plus Canvas/JPEG for common images.
+- **Core**: Mediabunny/WebCodecs for browser-codec video, `ffmpeg.wasm` for compatibility and TIFF/fallback decoding, plus Canvas/JPEG for common images.
 - **UI**: `Alpine.js` + Vanilla CSS.
 - **Build**: Vite.
 
 ## Development
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+Use Node 22.23.1 (the CI runtime; Node 20.19+ is also supported by the current Vite dependency):
 
-2. Start the development server:
-   ```bash
-   npm run dev
-   ```
+```bash
+npm ci
+```
 
-3. Run the test suite:
-   ```bash
-   npm test
-   ```
+Regenerate the checked-in deterministic synthetic fixtures only when changing their generator:
 
-4. Run the browser tests:
-   ```bash
-   npx playwright install chromium
-   npm run test:e2e
-   ```
+```bash
+npm run fixtures:generate
+```
 
-5. Build for production:
-   ```bash
-   npm run build
-   ```
+Run the unit suite and Chromium browser suites:
+
+```bash
+npm test
+npx playwright install chromium
+npm run test:e2e:dev
+npm run test:e2e:built
+```
+
+Run the optional desktop WebKit smoke suite when WebKit is installed:
+
+```bash
+npx playwright install webkit
+npm run test:e2e:webkit
+```
+
+Build for production:
+
+```bash
+npm run build
+```
+
+The app does not promise universal HEIC, HDR, device-camera, iOS, or Safari support. Results depend on the browser's decode/encode capabilities and available device memory. The desktop WebKit smoke suite is a compatibility signal, not iOS/Safari release proof. The E2E suite also asserts that no media upload POST/PUT requests occur.
 
 ## Credits
 
