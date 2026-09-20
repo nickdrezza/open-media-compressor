@@ -67,6 +67,9 @@
         </div>
 
         <p id="phase-status" role="status" aria-live="polite" x-text="phaseMessage"></p>
+        <button id="reload-btn" type="button" x-show="reloadAvailable" @click="reloadPage">
+            RELOAD PAGE
+        </button>
     </main>
 
     <div id="controls-area">
