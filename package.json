@@ -1,5 +1,6 @@
 {
     "name": "open-media-compressor",
+    "license": "AGPL-3.0-only",
     "version": "1.0.0",
     "description": "Ultra-minimalist browser-based media compressor",
     "type": "module",
