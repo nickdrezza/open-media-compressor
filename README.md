@@ -1,67 +1,85 @@
 # Open Media Compressor
 
-An ultra-minimalist, "Brutalist" single-page web application for private media compression. It runs entirely in the browser.
+**Smaller files. Still on your device.**
 
-## Features
+![Open Media Compressor reduces a large file to a smaller file in the browser.](docs/readme-banner.svg)
 
-- **Privacy first**: all processing happens locally on your device. No media is sent to a server.
-- **Video**: supported inputs become H.264/AAC MP4 when the current browser can encode the requested tracks. If that capability is missing or the encode fails, the app reports the compatibility path and retries with FFmpeg WebAssembly. Silent inputs remain silent; primary audio and video tracks are mapped explicitly, metadata and chapters are stripped, and the result is checked against the requested size.
-- **Images**: supported still images become JPEG, preserving resolution when possible and resizing only when quality alone cannot meet the target. Transparency is flattened onto white. Animated input is treated as a still image and produces a JPEG frame, not an animated output.
-- **Private**: all codecs run locally in the browser. Media never leaves the device.
+Drop in an image or video. Choose a maximum size. Download the result.
+Compression runs in your browser. Your media is not uploaded to a server.
 
-## Portfolio Notes
+[**Open the compressor →**](https://open-media-compressor.nickdrezza.com)
 
-- **Problem:** media compression tools often require uploads, subscriptions, or unclear privacy tradeoffs.
-- **Approach:** use WebCodecs where available, FFmpeg WebAssembly for compatibility, and the browser's JPEG encoder for common images.
-- **What it shows:** browser capability detection, real output validation, metadata stripping, target-size heuristics, and a compatibility path for browsers without the required codec support.
+## Pick a size. Keep it local.
 
-## Technology Stack
+1. Select or drop your media files.
+2. Set **Max Size** in KB or MB.
+3. Compress and download the result.
 
-- **Core**: Mediabunny/WebCodecs for browser-codec video, `ffmpeg.wasm` for compatibility and TIFF/fallback decoding, plus Canvas/JPEG for common images.
-- **UI**: `Alpine.js` + Vanilla CSS.
-- **Build**: Vite.
+| Input | Output |
+| --- | --- |
+| Supported video | H.264/AAC MP4. Silent video stays silent. |
+| Supported still image | JPEG. Resolution is kept when possible. |
+| Animated image | A still JPEG frame, not an animation. |
 
-## Development
+Image transparency is flattened onto white. The app reduces image quality before dimensions.
+Video output is checked against the requested size, with media metadata and chapters removed.
 
-Use Node 22.23.1 (the CI runtime; Node 20.19+ is also supported by the current Vite dependency):
+## Browser support
 
-```bash
+The app uses browser codecs when they can encode the requested tracks.
+If that path is unavailable or fails, it retries with FFmpeg WebAssembly.
+All media processing stays on your device.
+
+Results depend on browser codec support and available memory.
+HEIC, HDR, camera formats, iOS, and Safari support are not guaranteed.
+The desktop WebKit test is a compatibility check, not proof of iOS or Safari support.
+
+## Run locally
+
+Use Node 22.23.1, the CI runtime. Install dependencies and start Vite:
+
+```sh
+git clone https://github.com/nickdrezza/open-media-compressor.git
+cd open-media-compressor
 npm ci
+npm run dev
 ```
 
-Regenerate the checked-in deterministic synthetic fixtures only when changing their generator:
+Build for production with `npm run build`.
 
-```bash
-npm run fixtures:generate
-```
+<details>
+<summary>Development checks and codecs</summary>
+
+The video path uses Mediabunny and WebCodecs, with `ffmpeg.wasm` for compatibility.
+Canvas provides common image decoding and JPEG encoding. FFmpeg also handles TIFF and
+fallback decoding. The interface uses Alpine.js and CSS; Vite builds the app.
 
 Run the unit suite and Chromium browser suites:
 
-```bash
+```sh
 npm test
 npx playwright install chromium
 npm run test:e2e:dev
 npm run test:e2e:built
 ```
 
-Run the optional desktop WebKit smoke suite when WebKit is installed:
+The browser suite checks that no media upload POST or PUT requests occur.
+Run the optional desktop WebKit suite when that browser is installed:
 
-```bash
+```sh
 npx playwright install webkit
 npm run test:e2e:webkit
 ```
 
-Build for production:
+Regenerate the deterministic test fixtures only when their generator changes:
 
-```bash
-npm run build
+```sh
+npm run fixtures:generate
 ```
 
-The app does not promise universal HEIC, HDR, device-camera, iOS, or Safari support. Results depend on the browser's decode/encode capabilities and available device memory. The desktop WebKit smoke suite is a compatibility signal, not iOS/Safari release proof. The E2E suite also asserts that no media upload POST/PUT requests occur.
+</details>
 
-## Credits
-
-Open-source and 100% free. Made by [nickdrezza](https://nickdrezza.com).
+Made by [nickdrezza](https://nickdrezza.com).
 
 ## License
 
