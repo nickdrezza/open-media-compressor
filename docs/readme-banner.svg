@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="300" viewBox="0 0 960 300" role="img" aria-labelledby="title desc">
+  <title id="title">Open Media Compressor. Smaller files. Still on your device.</title>
+  <desc id="desc">Images and videos, compressed in your browser.</desc>
+  <rect width="960" height="300" rx="24" fill="#f1f1ee"/>
+  <circle cx="932" cy="8" r="170" fill="#30302d" opacity="0.06"/>
+  <g font-family="system-ui, sans-serif" fill="#252526">
+    <text x="52" y="105" font-size="35" font-weight="700">Open Media Compressor</text>
+    <text x="54" y="156" font-size="23">Smaller files. Still on your device.</text>
+    <text x="54" y="218" font-size="15" fill="#5b5a60">Images and videos, compressed in your browser.</text>
+  </g>
+  <rect x="558" y="63" width="125" height="173" rx="4" fill="#30302d"/>
+  <path d="M640 63 V101 H683" fill="none" stroke="#92928a" stroke-width="3"/>
+  <path d="M699 148 H746 M734 138 L746 148 L734 158" fill="none" stroke="#787870" stroke-width="3"/>
+  <rect x="773" y="104" width="79" height="106" rx="4" fill="#fff" stroke="#30302d" stroke-width="3"/>
+  <path d="M825 104 V130 H852" fill="none" stroke="#30302d" stroke-width="2"/>
+  <g font-family="system-ui, sans-serif" font-size="15" text-anchor="middle" fill="#5b5a54">
+    <text x="620" y="263">before</text><text x="812" y="237">after</text>
+  </g>
+</svg>
